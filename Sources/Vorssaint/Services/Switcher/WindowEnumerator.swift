@@ -75,6 +75,20 @@ enum WindowEnumerator {
         )
     }
 
+    /// Captures the Command Bar's broader window list on main. Its completion
+    /// deliberately ignores Switcher app rules so hidden apps remain searchable.
+    static func captureCommandBarSnapshot() -> SwitcherSnapshot {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let defaults = UserDefaults.standard
+        return captureSnapshot(
+            windowlessApps: SwitcherWindowlessApps.mode(
+                storedValue: defaults.string(forKey: DefaultsKey.switcherWindowlessApps)),
+            appRules: [:],
+            groupByApp: defaults.bool(forKey: DefaultsKey.switcherMergeTabs),
+            currentSpaceOnly: defaults.bool(forKey: DefaultsKey.switcherCurrentSpaceOnly)
+        )
+    }
+
     private static func captureSnapshot(windowlessApps: SwitcherWindowlessApps,
                                         appRules: [String: SwitcherAppRule],
                                         groupByApp: Bool,
@@ -128,6 +142,11 @@ enum WindowEnumerator {
     }
 
     static func listWindows(from snapshot: SwitcherSnapshot) -> [SwitcherItem] {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        return listWindows(snapshot: snapshot, filterPID: nil, maximumCount: maximumCount)
+    }
+
+    static func listWindowsForCommandBar(from snapshot: SwitcherSnapshot) -> [SwitcherItem] {
         dispatchPrecondition(condition: .notOnQueue(.main))
         return listWindows(snapshot: snapshot, filterPID: nil, maximumCount: maximumCount)
     }
@@ -197,12 +216,6 @@ enum WindowEnumerator {
     static func listWindows() -> [SwitcherItem] {
         listWindows(appRules: SwitcherAppRule.rules(
             storedValue: UserDefaults.standard.dictionary(forKey: DefaultsKey.switcherAppRules)))
-    }
-
-    /// The Command Bar shares the window walk, not the Switcher's visibility
-    /// preferences. An app hidden from ⌘Tab must remain searchable there.
-    static func listWindowsForCommandBar() -> [SwitcherItem] {
-        listWindows(appRules: [:])
     }
 
     private static func listWindows(appRules: [String: SwitcherAppRule]) -> [SwitcherItem] {
