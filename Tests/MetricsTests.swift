@@ -1811,6 +1811,22 @@ struct MetricsTests {
                && pendingRoute.sessionActive,
                "App Switcher coalesces held-modifier repeats when startup finishes")
 
+        var handoffRoute = SwitcherRouteOwnership()
+        handoffRoute.setTapLive(true)
+        guard case let .accepted(handoffToken) = handoffRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a shortcut before the handoff interleaving")
+            return
+        }
+        let tapObservedPendingRoute = handoffRoute.hasPendingRoute
+        _ = handoffRoute.claim(handoffToken)
+        _ = handoffRoute.beginSession(handoffToken)
+        let decisionAfterMainWonHandoff = handoffRoute.decideMatchedRoute(
+            expectedAppsRoute,
+            allowingNewRoute: true
+        )
+        expect(tapObservedPendingRoute && decisionAfterMainWonHandoff == .activeSession,
+               "App Switcher consumes a matched repeat when main wins between observation and acceptance")
+
         var separateGestures = SwitcherRouteOwnership()
         separateGestures.setTapLive(true)
         guard case let .accepted(firstGestureToken) = separateGestures.accept(expectedAppsRoute) else {
@@ -6836,6 +6852,28 @@ struct MetricsTests {
                                                      delta: 1,
                                                      wrapping: false) == 2,
                "non-wrapping navigation still advances while not at the edge")
+        let overshootGroupedSwitcherItems = groupedSwitcherItems + [
+            SwitcherItem.window(id: 4, title: "Last", appName: "Gamma", pid: 303,
+                                isOnScreen: true, frame: .zero),
+        ]
+        expect(SwitcherSupport.nextAppSelectionIndex(items: overshootGroupedSwitcherItems,
+                                                     selectedIndex: 2,
+                                                     delta: 5,
+                                                     wrapping: false) == 3,
+               "collapsed forward repeats stop at the final app")
+        expect(SwitcherSupport.nextAppSelectionIndex(items: overshootGroupedSwitcherItems,
+                                                     selectedIndex: 2,
+                                                     delta: -5,
+                                                     wrapping: false) == 0,
+               "collapsed reverse repeats stop at the first app")
+        expect(SwitcherSupport.nonWrappingSelectionIndex(itemCount: 5,
+                                                         selectedIndex: 1,
+                                                         delta: 8) == 4,
+               "collapsed forward repeats stop at the final plain window")
+        expect(SwitcherSupport.nonWrappingSelectionIndex(itemCount: 5,
+                                                         selectedIndex: 3,
+                                                         delta: -8) == 0,
+               "collapsed reverse repeats stop at the first plain window")
         expect(SwitcherSupport.nextWindowSelectionIndexWithinApp(items: groupedSwitcherItems,
                                                                  selectedIndex: 0,
                                                                  delta: 1) == 1,

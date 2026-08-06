@@ -392,64 +392,54 @@ final class AppSwitcher: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
-        let (active, hasPendingRoute, shortcut, windowShortcut, capturing) = routeLock.withLock {
+        let (shortcut, windowShortcut, capturing) = routeLock.withLock {
             if type == .flagsChanged {
                 routeOwnership.observePendingModifierFlags(event.flags)
             }
-            return (routeOwnership.sessionActive, routeOwnership.hasPendingRoute,
-                    routeShortcut, routeWindowShortcut, routeOwnership.capturing)
+            return (routeShortcut, routeWindowShortcut, routeOwnership.capturing)
         }
         // A shortcut field in Settings has the keyboard: hand every key
         // straight through so the user can record this feature's own
         // combination instead of opening the switcher with it.
         if capturing { return Unmanaged.passUnretained(event) }
-        var initialRoute: SwitcherInitialRoute?
-        if !active {
-            if type == .flagsChanged, hasPendingRoute {
-                return Unmanaged.passUnretained(event)
-            }
+        var routeIsActive = routeLock.withLock { routeOwnership.sessionActive }
+        if !routeIsActive {
             guard type == .keyDown else { return Unmanaged.passUnretained(event) }
             let matchesApps = shortcut.matches(event: event, allowingExtraShift: true)
             let windowPositionalMatch = windowShortcut.matches(event: event, allowingExtraShift: true)
             let matchesWindows = !matchesApps
                 && (windowPositionalMatch || windowShortcut.matchesByCharacter(event: event))
-            initialRoute = SwitcherSupport.initialRoute(
+            guard let initialRoute = SwitcherSupport.initialRoute(
                 appsShortcut: shortcut,
                 windowShortcut: windowShortcut,
                 matchesApps: matchesApps,
                 matchesWindows: matchesWindows,
                 windowPositionalMatch: windowPositionalMatch,
                 shiftHeld: event.flags.contains(.maskShift)
-            )
-            guard let initialRoute else { return Unmanaged.passUnretained(event) }
-            // Live check at the one point that starts AX work: with the grant
-            // revoked, the session lookups would hang and freeze input. The
-            // TCC round-trip is an IPC, so it runs once per shortcut press,
-            // never once per key.
-            if hasPendingRoute,
-               let acceptance = routeLock.withLock({ routeOwnership.coalesceIfPending(initialRoute) }) {
-                switch acceptance {
-                case let .accepted(token):
-                    DispatchQueue.main.async { [weak self] in
-                        self?.handleAcceptedInitialRoute(token: token)
-                    }
-                    return nil
-                case .coalesced:
-                    return nil
-                case .rejected:
-                    return Unmanaged.passUnretained(event)
+            ) else {
+                // Session ownership may have changed after the first snapshot.
+                // Recheck before deciding that an unrelated key passes through.
+                routeIsActive = routeLock.withLock { routeOwnership.sessionActive }
+                if !routeIsActive { return Unmanaged.passUnretained(event) }
+                return routeActiveEvent(type: type, event: event)
+            }
+
+            var decision = routeLock.withLock {
+                routeOwnership.decideMatchedRoute(initialRoute, allowingNewRoute: false)
+            }
+            if decision == .needsAccessibility {
+                // Live check at the one point that starts AX work: with the grant
+                // revoked, the session lookups would hang and freeze input. The
+                // TCC round-trip is an IPC, so it runs once per shortcut press,
+                // never once per key.
+                guard AXIsProcessTrusted() else { return Unmanaged.passUnretained(event) }
+                decision = routeLock.withLock {
+                    routeOwnership.decideMatchedRoute(initialRoute, allowingNewRoute: true)
                 }
             }
-            guard AXIsProcessTrusted() else { return Unmanaged.passUnretained(event) }
-        }
-
-        if !active {
-            // The shortcut is consumed regardless of whether the desktop has
-            // anything to switch to. Return to WindowServer before any cache
-            // miss can start Accessibility work on the main thread.
-            guard let initialRoute else { return Unmanaged.passUnretained(event) }
-            let acceptance = routeLock.withLock { routeOwnership.accept(initialRoute) }
-            switch acceptance {
+            switch decision {
+            case .activeSession:
+                return routeActiveEvent(type: type, event: event)
             case let .accepted(token):
                 DispatchQueue.main.async { [weak self] in
                     self?.handleAcceptedInitialRoute(token: token)
@@ -457,11 +447,16 @@ final class AppSwitcher: ObservableObject {
                 return nil
             case .coalesced:
                 return nil
-            case .rejected:
+            case .needsAccessibility, .rejected:
                 return Unmanaged.passUnretained(event)
             }
         }
 
+        return routeActiveEvent(type: type, event: event)
+    }
+
+    private func routeActiveEvent(type: CGEventType,
+                                  event: CGEvent) -> Unmanaged<CGEvent>? {
         var verdict: Unmanaged<CGEvent>?
         DispatchQueue.main.sync {
             verdict = self.handle(type: type, event: event)
@@ -1088,8 +1083,11 @@ final class AppSwitcher: ObservableObject {
         }
         userNavigated = true
         let next = selectedIndex + delta
-        if !wrapping, !windows.indices.contains(next) { return }
-        selectedIndex = (next + windows.count) % windows.count
+        selectedIndex = wrapping
+            ? (next + windows.count) % windows.count
+            : SwitcherSupport.nonWrappingSelectionIndex(itemCount: windows.count,
+                                                        selectedIndex: selectedIndex,
+                                                        delta: delta)
     }
 
     private func advanceAppSelection(by delta: Int, wrapping: Bool = true) {

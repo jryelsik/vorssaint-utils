@@ -38,6 +38,14 @@ enum SwitcherPendingRouteAcceptance: Equatable {
     case rejected
 }
 
+enum SwitcherMatchedRouteDecision: Equatable {
+    case activeSession
+    case needsAccessibility
+    case accepted(UInt64)
+    case coalesced
+    case rejected
+}
+
 /// Owns the shortcut between the tap swallowing it and the main thread
 /// establishing a session. Repeats remain on the tap thread and collapse into
 /// one navigation delta while a cold Accessibility walk is in progress;
@@ -91,11 +99,19 @@ struct SwitcherRouteOwnership {
         return .accepted(generation)
     }
 
-    /// Returns nil when there is no pending owner and the caller must perform
-    /// the live Accessibility check before accepting a new route.
-    mutating func coalesceIfPending(_ route: SwitcherInitialRoute) -> SwitcherPendingRouteAcceptance? {
-        guard !pending.isEmpty else { return nil }
-        return accept(route)
+    /// Resolves the pending-to-active handoff under the route lock. The first
+    /// pass may request the live Accessibility check; the second either owns a
+    /// new route or observes that main established the session in between.
+    mutating func decideMatchedRoute(_ route: SwitcherInitialRoute,
+                                     allowingNewRoute: Bool) -> SwitcherMatchedRouteDecision {
+        guard tapLive, !capturing else { return .rejected }
+        if sessionActive { return .activeSession }
+        if pending.isEmpty, !allowingNewRoute { return .needsAccessibility }
+        switch accept(route) {
+        case let .accepted(token): return .accepted(token)
+        case .coalesced: return .coalesced
+        case .rejected: return .rejected
+        }
     }
 
     /// Records the release even while main is still building the session.
@@ -951,11 +967,19 @@ enum SwitcherSupport {
         let selectedID = items[selectedIndex].id
         let currentGroupIndex = groups.firstIndex { $0.itemIDs.contains(selectedID) } ?? 0
         let unwrapped = currentGroupIndex + delta
-        if !wrapping, !groups.indices.contains(unwrapped) {
-            return groups[currentGroupIndex].representativeIndex
-        }
-        let targetGroupIndex = (unwrapped + groups.count) % groups.count
+        let targetGroupIndex = wrapping
+            ? (unwrapped + groups.count) % groups.count
+            : min(max(0, unwrapped), groups.count - 1)
         return groups[targetGroupIndex].representativeIndex
+    }
+
+    /// Applies collapsed key repeats as the equivalent bounded unit steps.
+    static func nonWrappingSelectionIndex(itemCount: Int,
+                                          selectedIndex: Int,
+                                          delta: Int) -> Int {
+        guard itemCount > 0 else { return 0 }
+        let current = min(max(0, selectedIndex), itemCount - 1)
+        return min(max(0, current + delta), itemCount - 1)
     }
 
     static func nextWindowSelectionIndexWithinApp(items: [SwitcherItem],
