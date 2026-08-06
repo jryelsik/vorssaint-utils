@@ -1743,6 +1743,44 @@ struct MetricsTests {
         expect(SwitcherSupport.needsFocusedWindowLookup(frontmostPID: 101,
                                                         items: [embeddedWindow, secondVisibleWindow]),
                "App Switcher resolves the focused window when visible sources are ambiguous")
+        func windowFingerprint(title: String = "Project",
+                               isOnScreen: Bool = true,
+                               spaces: [UInt64] = [1],
+                               mergeTabs: Bool = false) -> SwitcherWindowFingerprint {
+            SwitcherWindowFingerprint(
+                windows: [.init(id: 77,
+                                ownerPID: 202,
+                                layer: 0,
+                                title: title,
+                                bounds: CGRect(x: 20, y: 20, width: 900, height: 600),
+                                alpha: 1,
+                                isOnScreen: isOnScreen,
+                                spaces: spaces)],
+                applications: [.init(pid: 101,
+                                     bundleIdentifier: "test.primary",
+                                     name: "Primary",
+                                     isRegular: true,
+                                     isTerminated: false,
+                                     bundlePath: "/Applications/Primary.app",
+                                     executablePath: "/Applications/Primary.app/Contents/MacOS/Primary")],
+                visibleSpaces: [1],
+                preferences: .init(appRules: [:],
+                                   windowlessApps: SwitcherWindowlessApps.finder.rawValue,
+                                   mergeTabs: mergeTabs,
+                                   currentSpaceOnly: true)
+            )
+        }
+        let stableWindowFingerprint = windowFingerprint()
+        expect(stableWindowFingerprint == windowFingerprint(),
+               "App Switcher reuses a cache only while window state and preferences match")
+        expect(stableWindowFingerprint != windowFingerprint(title: "Other tab"),
+               "App Switcher invalidates its cache when a window's displayed content changes")
+        expect(stableWindowFingerprint != windowFingerprint(isOnScreen: false),
+               "App Switcher invalidates its cache when a window leaves the visible desktop")
+        expect(stableWindowFingerprint != windowFingerprint(spaces: [2]),
+               "App Switcher invalidates its cache when a window moves between desktops")
+        expect(stableWindowFingerprint != windowFingerprint(mergeTabs: true),
+               "App Switcher invalidates its cache when grouping preferences change")
         expect(SwitcherSupport.initialSelectionPosition(pids: [101, 202, 303],
                                                         hasForegroundEntry: true,
                                                         frontmostPID: 101,

@@ -30,6 +30,68 @@ enum WindowEnumerator {
     /// bounded AX batches.
     private static let maximumConcurrentQueries = 24
 
+    /// Cheap proof that a warmed switcher list still describes the current
+    /// desktop. Unlike full enumeration this asks no app through Accessibility.
+    static func switcherFingerprint() -> SwitcherWindowFingerprint {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let defaults = UserDefaults.standard
+        let currentSpaceOnly = defaults.bool(forKey: DefaultsKey.switcherCurrentSpaceOnly)
+        let raw = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        let windows = raw.compactMap { info -> SwitcherWindowFingerprint.Window? in
+            guard let id = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                  let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue,
+                  layer == 0,
+                  let boundsDictionary = info[kCGWindowBounds as String] as? [String: Any]
+            else { return nil }
+            let bounds = CGRect(x: (boundsDictionary["X"] as? NSNumber)?.doubleValue ?? 0,
+                                y: (boundsDictionary["Y"] as? NSNumber)?.doubleValue ?? 0,
+                                width: (boundsDictionary["Width"] as? NSNumber)?.doubleValue ?? 0,
+                                height: (boundsDictionary["Height"] as? NSNumber)?.doubleValue ?? 0)
+            let isOnScreen = (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue
+                ?? (info[kCGWindowIsOnscreen as String] as? Bool)
+                ?? false
+            return SwitcherWindowFingerprint.Window(
+                id: CGWindowID(id),
+                ownerPID: ownerPID,
+                layer: layer,
+                title: info[kCGWindowName as String] as? String ?? "",
+                bounds: bounds,
+                alpha: (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1,
+                isOnScreen: isOnScreen,
+                spaces: currentSpaceOnly ? SpaceWindowBridge.spaces(of: CGWindowID(id)).sorted() : []
+            )
+        }
+        let visibleSpaces = currentSpaceOnly
+            ? (SpaceWindowBridge.topology()?.visibleSpaces ?? [])
+            : Set<UInt64>()
+        let applications = NSWorkspace.shared.runningApplications.map { app in
+            SwitcherWindowFingerprint.Application(
+                pid: app.processIdentifier,
+                bundleIdentifier: app.bundleIdentifier,
+                name: app.localizedName,
+                isRegular: app.activationPolicy == .regular,
+                isTerminated: app.isTerminated,
+                bundlePath: app.bundleURL?.path,
+                executablePath: app.executableURL?.path
+            )
+        }.sorted { $0.pid < $1.pid }
+        let appRules = SwitcherAppRule.rules(
+            storedValue: defaults.dictionary(forKey: DefaultsKey.switcherAppRules)
+        )
+        return SwitcherWindowFingerprint(
+            windows: windows,
+            applications: applications,
+            visibleSpaces: visibleSpaces,
+            preferences: .init(
+                appRules: appRules,
+                windowlessApps: defaults.string(forKey: DefaultsKey.switcherWindowlessApps),
+                mergeTabs: defaults.bool(forKey: DefaultsKey.switcherMergeTabs),
+                currentSpaceOnly: currentSpaceOnly
+            )
+        )
+    }
+
     static func listWindows() -> [SwitcherItem] {
         listWindows(appRules: SwitcherAppRule.rules(
             storedValue: UserDefaults.standard.dictionary(forKey: DefaultsKey.switcherAppRules)))
@@ -346,10 +408,8 @@ enum WindowEnumerator {
                                              acceptsUndescribedSubroles: Bool = false,
                                              screenFrames: [CGRect]) -> AccessibilityWindowSnapshotList? {
         let app = AXUIElementCreateApplication(pid)
-        // This runs on the main thread (tap callback and activation warm-ups):
-        // an app that is not servicing its run loop would hold every AX call
-        // for the 6 second default timeout, and a blocked main thread stalls
-        // the event taps with it, freezing typing system wide (issue #189).
+        // An app that is not servicing its run loop must not hold a query batch
+        // for Accessibility's six-second default (issue #189).
         AXUIElementSetMessagingTimeout(app, messagingTimeout)
         var axWindows: [AXUIElement] = []
         var value: CFTypeRef?

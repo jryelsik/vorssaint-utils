@@ -84,15 +84,13 @@ final class AppSwitcher: ObservableObject {
     private var routeWindowShortcut = GlobalShortcut.switcherWindowDefault
     private var routeCapturing = false
 
-    /// Enumeration touches every regular app through Accessibility, so it is
-    /// warmed away from the event tap and reused when a shortcut arrives.
-    private let enumerationQueue = DispatchQueue(label: "com.vorssaint.switcher.enumeration",
-                                                  qos: .userInitiated)
-    private let enumerationLock = NSLock()
+    /// Enumeration touches every regular app through Accessibility. A cheap
+    /// WindowServer fingerprint proves this warmed result still describes the
+    /// current desktop before a shortcut is allowed to reuse it.
     private var cachedWindowItems: [SwitcherItem] = []
+    private var cachedWindowFingerprint: SwitcherWindowFingerprint?
     private var windowCacheEnabled = false
-    private var enumerationScheduled = false
-    private var enumerationRefreshRequested = false
+    private var pendingCacheRefresh: DispatchWorkItem?
     private var workspaceTokens: [NSObjectProtocol] = []
 
     /// The panel appears only after this delay, like the system switcher: a
@@ -179,6 +177,7 @@ final class AppSwitcher: ObservableObject {
     func suspend() {
         stopObservingWake()
         removeTap()
+        stopWindowCache()
     }
 
     /// While a shortcut field is listening, every key has to reach it, even
@@ -403,6 +402,19 @@ final class AppSwitcher: ObservableObject {
             guard AXIsProcessTrusted() else { return Unmanaged.passUnretained(event) }
         }
 
+        if !active {
+            // The shortcut is consumed regardless of whether the desktop has
+            // anything to switch to. Return to WindowServer before any cache
+            // miss can start Accessibility work on the main thread.
+            let tapAlive = lifecycleLock.withLock { tap != nil && !shouldStopTapThread }
+            guard tapAlive else { return Unmanaged.passUnretained(event) }
+            guard let copiedEvent = event.copy() else { return nil }
+            DispatchQueue.main.async { [weak self] in
+                _ = self?.handle(type: type, event: copiedEvent)
+            }
+            return nil
+        }
+
         var verdict: Unmanaged<CGEvent>?
         DispatchQueue.main.sync {
             verdict = self.handle(type: type, event: event)
@@ -593,12 +605,26 @@ final class AppSwitcher: ObservableObject {
                               scope: SwitcherSessionScope = .allApps) -> Bool {
         guard let reportedFrontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         else { return false }
-        var allWindows = cachedWindows()
-        if allWindows.isEmpty {
-            // The warm-up normally wins this race. Keep the first shortcut
-            // functional when the feature was enabled only a moment ago.
-            allWindows = WindowEnumerator.listWindows()
-            storeCachedWindows(allWindows)
+        let fingerprint = WindowEnumerator.switcherFingerprint()
+        let allWindows: [SwitcherItem]
+        if cachedWindowFingerprint == fingerprint {
+            allWindows = cachedWindowItems
+        } else {
+            var refreshed = WindowEnumerator.listWindows()
+            var refreshedFingerprint = WindowEnumerator.switcherFingerprint()
+            var isStable = fingerprint == refreshedFingerprint
+            if !isStable {
+                let retryFingerprint = refreshedFingerprint
+                refreshed = WindowEnumerator.listWindows()
+                refreshedFingerprint = WindowEnumerator.switcherFingerprint()
+                isStable = retryFingerprint == refreshedFingerprint
+            }
+            allWindows = refreshed
+            if isStable {
+                storeCachedWindows(refreshed, fingerprint: refreshedFingerprint)
+            } else {
+                invalidateWindowCache()
+            }
         }
         let windows: [SwitcherItem]
         switch scope {
@@ -676,18 +702,25 @@ final class AppSwitcher: ObservableObject {
                 self.previews[windowID] = image
             }
         }
-        scheduleShowPanel()
-        scheduleWindowCacheRefresh()
+        // A cache miss is rebuilt after the tap callback returns. If the user
+        // already released the shortcut during that work, preserve quick-flick
+        // behavior by committing immediately without flashing the panel.
+        if shortcut.requiredModifiersHeld(in: CGEventSource.flagsState(.combinedSessionState)) {
+            scheduleShowPanel()
+        } else {
+            commitSession()
+        }
         return true
     }
 
     // MARK: - Window cache
 
     /// Keeps the expensive Accessibility walk off the shortcut callback. App
-    /// lifecycle changes refresh it, and every session starts another refresh
-    /// for window changes that do not activate a different application.
+    /// lifecycle changes invalidate it, and a WindowServer fingerprint catches
+    /// window and Space changes that have no workspace notification.
     private func startWindowCache() {
-        enumerationLock.withLock { windowCacheEnabled = true }
+        windowCacheEnabled = true
+        invalidateWindowCache()
         if workspaceTokens.isEmpty {
             let center = NSWorkspace.shared.notificationCenter
             let names: [Notification.Name] = [
@@ -697,6 +730,7 @@ final class AppSwitcher: ObservableObject {
             ]
             workspaceTokens = names.map { name in
                 center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    self?.invalidateWindowCache()
                     self?.scheduleWindowCacheRefresh()
                 }
             }
@@ -708,53 +742,42 @@ final class AppSwitcher: ObservableObject {
         let center = NSWorkspace.shared.notificationCenter
         for token in workspaceTokens { center.removeObserver(token) }
         workspaceTokens = []
-        enumerationLock.withLock {
-            windowCacheEnabled = false
-            enumerationRefreshRequested = false
-            cachedWindowItems = []
-        }
+        windowCacheEnabled = false
+        pendingCacheRefresh?.cancel()
+        pendingCacheRefresh = nil
+        invalidateWindowCache()
     }
 
     private func scheduleWindowCacheRefresh() {
-        let shouldSchedule = enumerationLock.withLock { () -> Bool in
-            guard windowCacheEnabled else { return false }
-            if enumerationScheduled {
-                enumerationRefreshRequested = true
-                return false
-            }
-            enumerationScheduled = true
-            return true
-        }
-        guard shouldSchedule else { return }
-        enumerationQueue.async { [weak self] in
+        guard windowCacheEnabled, pendingCacheRefresh == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            while true {
-                let items = WindowEnumerator.listWindows()
-                let shouldRepeat = self.enumerationLock.withLock { () -> Bool in
-                    guard self.windowCacheEnabled else {
-                        self.enumerationScheduled = false
-                        self.enumerationRefreshRequested = false
-                        return false
-                    }
-                    self.cachedWindowItems = items
-                    guard self.enumerationRefreshRequested else {
-                        self.enumerationScheduled = false
-                        return false
-                    }
-                    self.enumerationRefreshRequested = false
-                    return true
-                }
-                guard shouldRepeat else { return }
+            self.pendingCacheRefresh = nil
+            guard self.windowCacheEnabled else { return }
+            let before = WindowEnumerator.switcherFingerprint()
+            let items = WindowEnumerator.listWindows()
+            let after = WindowEnumerator.switcherFingerprint()
+            guard self.windowCacheEnabled else { return }
+            if before == after {
+                self.storeCachedWindows(items, fingerprint: after)
+            } else {
+                self.invalidateWindowCache()
+                self.scheduleWindowCacheRefresh()
             }
         }
+        pendingCacheRefresh = work
+        DispatchQueue.main.async(execute: work)
     }
 
-    private func cachedWindows() -> [SwitcherItem] {
-        enumerationLock.withLock { cachedWindowItems }
+    private func invalidateWindowCache() {
+        cachedWindowItems = []
+        cachedWindowFingerprint = nil
     }
 
-    private func storeCachedWindows(_ items: [SwitcherItem]) {
-        enumerationLock.withLock { cachedWindowItems = items }
+    private func storeCachedWindows(_ items: [SwitcherItem],
+                                    fingerprint: SwitcherWindowFingerprint) {
+        cachedWindowItems = items
+        cachedWindowFingerprint = fingerprint
     }
 
     private func handleShiftBackNavigation(flags: CGEventFlags) -> Bool {

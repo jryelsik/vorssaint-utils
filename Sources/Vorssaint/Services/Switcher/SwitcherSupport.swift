@@ -23,6 +23,43 @@ struct SwitcherSearchRecord: Equatable {
     let appName: String
 }
 
+/// The cheap state that proves a warmed window list still describes the
+/// current desktop and the preferences that shaped it.
+struct SwitcherWindowFingerprint: Equatable {
+    struct Window: Equatable {
+        let id: CGWindowID
+        let ownerPID: pid_t
+        let layer: Int
+        let title: String
+        let bounds: CGRect
+        let alpha: Double
+        let isOnScreen: Bool
+        let spaces: [UInt64]
+    }
+
+    struct Preferences: Equatable {
+        let appRules: [String: SwitcherAppRule]
+        let windowlessApps: String?
+        let mergeTabs: Bool
+        let currentSpaceOnly: Bool
+    }
+
+    struct Application: Equatable {
+        let pid: pid_t
+        let bundleIdentifier: String?
+        let name: String?
+        let isRegular: Bool
+        let isTerminated: Bool
+        let bundlePath: String?
+        let executablePath: String?
+    }
+
+    let windows: [Window]
+    let applications: [Application]
+    let visibleSpaces: Set<UInt64>
+    let preferences: Preferences
+}
+
 /// What a letter typed with the panel open does. Anything else goes to search.
 enum SwitcherLetterAction: Equatable {
     case closeWindow
