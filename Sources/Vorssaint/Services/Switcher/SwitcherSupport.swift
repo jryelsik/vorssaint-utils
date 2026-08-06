@@ -32,6 +32,107 @@ struct SwitcherInitialRoute: Equatable {
     let reversed: Bool
 }
 
+enum SwitcherPendingRouteAcceptance: Equatable {
+    case accepted(UInt64)
+    case coalesced
+    case rejected
+}
+
+/// Owns the shortcut between the tap swallowing it and the main thread
+/// establishing a session. Repeats remain on the tap thread and collapse into
+/// one navigation delta while a cold Accessibility walk is in progress.
+struct SwitcherRouteOwnership {
+    private(set) var sessionActive = false
+    private(set) var tapLive = false
+    private(set) var capturing = false
+
+    private struct Pending {
+        let token: UInt64
+        let route: SwitcherInitialRoute
+        var navigationDelta = 0
+        var claimed = false
+    }
+
+    private var generation: UInt64 = 0
+    private var pending: Pending?
+
+    var hasPendingRoute: Bool { pending != nil }
+
+    mutating func setTapLive(_ live: Bool) {
+        tapLive = live
+        if !live { invalidatePendingRoute() }
+    }
+
+    mutating func setCapturing(_ value: Bool) {
+        capturing = value
+        if value { invalidatePendingRoute() }
+    }
+
+    mutating func setSessionActive(_ active: Bool) {
+        sessionActive = active
+        if !active { invalidatePendingRoute() }
+    }
+
+    mutating func accept(_ route: SwitcherInitialRoute) -> SwitcherPendingRouteAcceptance {
+        guard tapLive, !capturing, !sessionActive else { return .rejected }
+        if var pending {
+            guard pending.route.shortcut == route.shortcut,
+                  pending.route.scope == route.scope
+            else { return .rejected }
+            pending.navigationDelta += route.reversed ? -1 : 1
+            self.pending = pending
+            return .coalesced
+        }
+        generation &+= 1
+        pending = Pending(token: generation, route: route)
+        return .accepted(generation)
+    }
+
+    /// Returns nil when there is no pending owner and the caller must perform
+    /// the live Accessibility check before accepting a new route.
+    mutating func coalesceIfPending(_ route: SwitcherInitialRoute) -> SwitcherPendingRouteAcceptance? {
+        guard pending != nil else { return nil }
+        return accept(route)
+    }
+
+    mutating func claim(_ token: UInt64) -> SwitcherInitialRoute? {
+        guard tapLive, !capturing, !sessionActive,
+              var pending, pending.token == token, !pending.claimed
+        else { return nil }
+        pending.claimed = true
+        self.pending = pending
+        return pending.route
+    }
+
+    /// Atomically hands routing to the new session after its first selection
+    /// exists. Repeats can keep accumulating until this exact transition.
+    mutating func beginSession(_ token: UInt64) -> (route: SwitcherInitialRoute, navigationDelta: Int)? {
+        guard tapLive, !capturing, !sessionActive,
+              let pending, pending.token == token, pending.claimed
+        else { return nil }
+        self.pending = nil
+        sessionActive = true
+        return (pending.route, pending.navigationDelta)
+    }
+
+    mutating func invalidatePendingRoute() {
+        guard pending != nil else { return }
+        pending = nil
+        generation &+= 1
+    }
+
+    mutating func invalidatePendingRoute(token: UInt64) {
+        guard pending?.token == token else { return }
+        invalidatePendingRoute()
+    }
+}
+
+enum SwitcherCacheDisposition: Equatable {
+    case reuse
+    case reuseAndRefresh
+    case rebuild
+}
+
 /// The cheap state that proves a warmed window list still describes the
 /// current desktop and the preferences that shaped it.
 struct SwitcherWindowFingerprint: Equatable {
@@ -273,6 +374,27 @@ struct SwitcherShortcutHints: Equatable {
 }
 
 enum SwitcherSupport {
+    static func cacheDisposition(fingerprintMatches: Bool,
+                                 storedAt: TimeInterval?,
+                                 now: TimeInterval,
+                                 maximumAge: TimeInterval) -> SwitcherCacheDisposition {
+        guard fingerprintMatches else { return .rebuild }
+        guard let storedAt,
+              now >= storedAt,
+              now - storedAt <= maximumAge
+        else { return .reuseAndRefresh }
+        return .reuse
+    }
+
+    static func eligibleCandidate(_ item: SwitcherItem,
+                                  in eligibleItems: [SwitcherItem],
+                                  groupedByApp: Bool) -> SwitcherItem? {
+        if groupedByApp {
+            return eligibleItems.first { $0.pid == item.pid }
+        }
+        return eligibleItems.first { $0.id == item.id }
+    }
+
     static func initialRoute(appsShortcut: GlobalShortcut,
                              windowShortcut: GlobalShortcut,
                              matchesApps: Bool,

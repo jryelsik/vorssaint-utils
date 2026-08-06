@@ -1789,10 +1789,70 @@ struct MetricsTests {
             windowPositionalMatch: false,
             shiftHeld: false
         )
-        expect(acceptedAppsRoute == SwitcherInitialRoute(shortcut: .switcherDefault,
-                                                         scope: .allApps,
-                                                         reversed: false),
+        let expectedAppsRoute = SwitcherInitialRoute(shortcut: .switcherDefault,
+                                                     scope: .allApps,
+                                                     reversed: false)
+        expect(acceptedAppsRoute == expectedAppsRoute,
                "App Switcher carries the accepted shortcut decision unchanged to main")
+        var pendingRoute = SwitcherRouteOwnership()
+        pendingRoute.setTapLive(true)
+        guard case let .accepted(pendingToken) = pendingRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher atomically owns an accepted shortcut")
+            return
+        }
+        expect(pendingRoute.accept(expectedAppsRoute) == .coalesced
+               && pendingRoute.claim(pendingToken) == expectedAppsRoute
+               && pendingRoute.accept(expectedAppsRoute) == .coalesced,
+               "App Switcher coalesces repeats before and during main-thread startup")
+        let begunPendingRoute = pendingRoute.beginSession(pendingToken)
+        expect(begunPendingRoute?.route == expectedAppsRoute
+               && begunPendingRoute?.navigationDelta == 2
+               && pendingRoute.sessionActive,
+               "App Switcher applies coalesced navigation once when startup finishes")
+
+        var tornDownRoute = SwitcherRouteOwnership()
+        tornDownRoute.setTapLive(true)
+        guard case let .accepted(tornDownToken) = tornDownRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a shortcut before teardown")
+            return
+        }
+        tornDownRoute.setTapLive(false)
+        expect(tornDownRoute.claim(tornDownToken) == nil && !tornDownRoute.hasPendingRoute,
+               "App Switcher invalidates accepted shortcut ownership before tap teardown")
+        tornDownRoute.setTapLive(true)
+        guard case let .accepted(replacementToken) = tornDownRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher accepts a shortcut after tap restart")
+            return
+        }
+        expect(replacementToken > tornDownToken
+               && tornDownRoute.claim(tornDownToken) == nil
+               && tornDownRoute.claim(replacementToken) == expectedAppsRoute,
+               "App Switcher tokens keep stale main-thread work from claiming a new route")
+        tornDownRoute.invalidatePendingRoute(token: replacementToken)
+        expect(tornDownRoute.beginSession(replacementToken) == nil
+               && !tornDownRoute.sessionActive,
+               "App Switcher releases ownership after empty or failed session startup")
+
+        expect(SwitcherSupport.cacheDisposition(fingerprintMatches: true,
+                                                storedAt: 99,
+                                                now: 100,
+                                                maximumAge: 2) == .reuse,
+               "App Switcher immediately reuses a fresh equal-fingerprint cache")
+        expect(SwitcherSupport.cacheDisposition(fingerprintMatches: true,
+                                                storedAt: 90,
+                                                now: 100,
+                                                maximumAge: 2) == .reuseAndRefresh,
+               "App Switcher presents an expired equal-fingerprint cache and refreshes it")
+        expect(SwitcherSupport.cacheDisposition(fingerprintMatches: true,
+                                                storedAt: nil,
+                                                now: 100,
+                                                maximumAge: 2) == .reuseAndRefresh,
+               "App Switcher refreshes an expired empty cache without blocking presentation")
+        expect(SwitcherSupport.cacheDisposition(fingerprintMatches: false,
+                                                storedAt: 99,
+                                                now: 100,
+                                                maximumAge: 2) == .rebuild,
+               "App Switcher never treats a mismatched fingerprint as current")
         expect(SwitcherSupport.cacheRefreshRetryDelay(stable: false,
                                                       retryCount: 0,
                                                       sessionActive: false) == 0.2
@@ -1834,6 +1894,23 @@ struct MetricsTests {
         expect(validatedIDs == [staleCandidate.id, cachedCandidate.id]
                && liveCandidate == refreshedCandidate,
                "App Switcher validates only bounded candidates and uses current AX state")
+        let appOnlyCandidate = SwitcherItem.appOnly(appName: "Primary", pid: 101)
+        expect(SwitcherSupport.eligibleCandidate(staleCandidate,
+                                                in: [],
+                                                groupedByApp: false) == nil,
+               "App Switcher rejects a release candidate moved to a hidden Space")
+        expect(SwitcherSupport.eligibleCandidate(staleCandidate,
+                                                in: [cachedCandidate],
+                                                groupedByApp: false) == nil,
+               "App Switcher rejects a release candidate hidden by its app rule")
+        expect(SwitcherSupport.eligibleCandidate(appOnlyCandidate,
+                                                in: [appOnlyCandidate],
+                                                groupedByApp: false) == appOnlyCandidate,
+               "App Switcher validates app-only candidates through live switcher eligibility")
+        expect(SwitcherSupport.eligibleCandidate(appOnlyCandidate,
+                                                in: [staleCandidate],
+                                                groupedByApp: true) == staleCandidate,
+               "App Switcher resolves grouped app entries to their current representative")
         expect(SwitcherSupport.initialSelectionPosition(pids: [101, 202, 303],
                                                         hasForegroundEntry: true,
                                                         frontmostPID: 101,

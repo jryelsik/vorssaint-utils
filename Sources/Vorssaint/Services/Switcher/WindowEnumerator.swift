@@ -133,17 +133,34 @@ enum WindowEnumerator {
                     currentSpaceOnly: false)
     }
 
+    /// Re-enumerates one app using the switcher's live visibility contract.
+    /// Release validation stays bounded without borrowing the Dock preview's
+    /// deliberately broader rules.
+    static func listSwitcherWindows(for pid: pid_t, maximumCount: Int = 64) -> [SwitcherItem] {
+        let defaults = UserDefaults.standard
+        return listWindows(
+            filterPID: pid,
+            maximumCount: maximumCount,
+            windowlessApps: SwitcherWindowlessApps.mode(
+                storedValue: defaults.string(forKey: DefaultsKey.switcherWindowlessApps)),
+            appRules: SwitcherAppRule.rules(
+                storedValue: defaults.dictionary(forKey: DefaultsKey.switcherAppRules)),
+            groupByApp: defaults.bool(forKey: DefaultsKey.switcherMergeTabs),
+            currentSpaceOnly: defaults.bool(forKey: DefaultsKey.switcherCurrentSpaceOnly)
+        )
+    }
+
     /// Re-reads just the app that owns a release candidate. This AX-aware
     /// check catches closed, minimized, restored, fullscreen and AX-only
     /// windows without making the consumed shortcut enumerate every app.
-    static func refreshedCandidate(_ item: SwitcherItem) -> SwitcherItem? {
+    static func refreshedSwitcherCandidate(_ item: SwitcherItem) -> SwitcherItem? {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard item.windowID != nil else {
-            guard let app = NSRunningApplication(processIdentifier: item.pid), !app.isTerminated
-            else { return nil }
-            return item
-        }
-        return listWindows(for: item.pid, maximumCount: 64).first { $0.id == item.id }
+        let groupedByApp = UserDefaults.standard.bool(forKey: DefaultsKey.switcherMergeTabs)
+        return SwitcherSupport.eligibleCandidate(
+            item,
+            in: listSwitcherWindows(for: item.pid),
+            groupedByApp: groupedByApp
+        )
     }
 
     private static func listWindows(filterPID: pid_t?,
