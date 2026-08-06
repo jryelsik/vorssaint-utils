@@ -395,8 +395,9 @@ struct SwitcherCacheRefreshOwnership {
     }
 
     mutating func beginWorker(_ token: UInt64, sessionActive: Bool) -> Bool {
-        guard enabled, !sessionActive, scheduledToken == token else { return false }
+        guard enabled, scheduledToken == token else { return false }
         scheduledToken = nil
+        guard !sessionActive else { return false }
         workerToken = token
         return true
     }

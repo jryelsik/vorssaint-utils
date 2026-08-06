@@ -2233,6 +2233,13 @@ struct MetricsTests {
                                                             schedulesRerun: false),
                "App Switcher an active session suppresses a stale worker rerun")
 
+        var delayedSessionRefresh = SwitcherCacheRefreshOwnership()
+        delayedSessionRefresh.setEnabled(true)
+        let delayedSessionToken = delayedSessionRefresh.schedule(sessionActive: false)!
+        expect(!delayedSessionRefresh.beginWorker(delayedSessionToken, sessionActive: true)
+               && delayedSessionRefresh.schedule(sessionActive: false) != nil,
+               "App Switcher reschedules warming after a session suppresses worker startup")
+
         var stoppedRefresh = SwitcherCacheRefreshOwnership()
         stoppedRefresh.setEnabled(true)
         let stoppedToken = stoppedRefresh.schedule(sessionActive: false)!
