@@ -111,6 +111,9 @@ final class AppSwitcher: ObservableObject {
     /// just got rid of is not somewhere to send them back to.
     private var sessionStartWindowID: CGWindowID?
     private var sessionSourceContext: SwitcherSourceContext?
+    /// The target of a completed quick flick becomes the source for a gesture
+    /// already queued behind it, before the window server reports the focus.
+    private var queuedSessionSource: SwitcherItem?
     private var sessionShortcut: GlobalShortcut?
     private var sessionScope: SwitcherSessionScope = .allApps
     private var shiftBackNavigationHeld = false
@@ -390,8 +393,11 @@ final class AppSwitcher: ObservableObject {
         }
 
         let (active, hasPendingRoute, shortcut, windowShortcut, capturing) = routeLock.withLock {
-            (routeOwnership.sessionActive, routeOwnership.hasPendingRoute,
-             routeShortcut, routeWindowShortcut, routeOwnership.capturing)
+            if type == .flagsChanged {
+                routeOwnership.observePendingModifierFlags(event.flags)
+            }
+            return (routeOwnership.sessionActive, routeOwnership.hasPendingRoute,
+                    routeShortcut, routeWindowShortcut, routeOwnership.capturing)
         }
         // A shortcut field in Settings has the keyboard: hand every key
         // straight through so the user can record this feature's own
@@ -422,7 +428,17 @@ final class AppSwitcher: ObservableObject {
             // never once per key.
             if hasPendingRoute,
                let acceptance = routeLock.withLock({ routeOwnership.coalesceIfPending(initialRoute) }) {
-                return acceptance == .coalesced ? nil : Unmanaged.passUnretained(event)
+                switch acceptance {
+                case let .accepted(token):
+                    DispatchQueue.main.async { [weak self] in
+                        self?.handleAcceptedInitialRoute(token: token)
+                    }
+                    return nil
+                case .coalesced:
+                    return nil
+                case .rejected:
+                    return Unmanaged.passUnretained(event)
+                }
             }
             guard AXIsProcessTrusted() else { return Unmanaged.passUnretained(event) }
         }
@@ -492,7 +508,11 @@ final class AppSwitcher: ObservableObject {
         guard Permissions.shared.accessibility, AXIsProcessTrusted(),
               let route = routeLock.withLock({ routeOwnership.claim(token) })
         else {
-            routeLock.withLock { routeOwnership.invalidatePendingRoute(token: token) }
+            let hasPendingRoute = routeLock.withLock {
+                routeOwnership.invalidatePendingRoute(token: token)
+                return routeOwnership.hasPendingRoute
+            }
+            if !hasPendingRoute { queuedSessionSource = nil }
             return
         }
         guard beginSession(reversed: route.reversed,
@@ -500,7 +520,11 @@ final class AppSwitcher: ObservableObject {
                            scope: route.scope,
                            pendingRouteToken: token)
         else {
-            routeLock.withLock { routeOwnership.invalidatePendingRoute(token: token) }
+            let hasPendingRoute = routeLock.withLock {
+                routeOwnership.invalidatePendingRoute(token: token)
+                return routeOwnership.hasPendingRoute
+            }
+            if !hasPendingRoute { queuedSessionSource = nil }
             scheduleWindowCacheRefresh()
             return
         }
@@ -656,7 +680,10 @@ final class AppSwitcher: ObservableObject {
                               shortcut: GlobalShortcut,
                               scope: SwitcherSessionScope = .allApps,
                               pendingRouteToken: UInt64? = nil) -> Bool {
-        guard let reportedFrontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let queuedSource = queuedSessionSource
+        queuedSessionSource = nil
+        guard let reportedFrontPID = queuedSource?.pid
+            ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
         else { return false }
         let fingerprint = WindowEnumerator.switcherFingerprint()
         let allWindows: [SwitcherItem]
@@ -703,10 +730,11 @@ final class AppSwitcher: ObservableObject {
             guard !scoped.isEmpty else { return false }
             windows = scoped
         }
-        let focusedSourceWindowID = SwitcherSupport.needsFocusedWindowLookup(
-            frontmostPID: reportedFrontPID,
-            items: windows
-        ) ? focusedWindowID(for: reportedFrontPID) : nil
+        let focusedSourceWindowID = queuedSource?.windowID
+            ?? (SwitcherSupport.needsFocusedWindowLookup(
+                frontmostPID: reportedFrontPID,
+                items: windows
+            ) ? focusedWindowID(for: reportedFrontPID) : nil)
         // The foreground window is what a session is measured against, and it
         // does not always exist: an app left with no windows, or with all of
         // them minimized or on another Space, still owns the keyboard. The
@@ -719,13 +747,16 @@ final class AppSwitcher: ObservableObject {
 
         let list = orderedForSession(windows, currentID: source?.id)
         let pendingNavigationDelta: Int
+        let pendingGestureEnded: Bool
         if let pendingRouteToken {
             guard let accepted = routeLock.withLock({ routeOwnership.beginSession(pendingRouteToken) })
             else { return false }
             pendingNavigationDelta = accepted.navigationDelta
+            pendingGestureEnded = accepted.gestureEnded
         } else {
             sessionActive = true
             pendingNavigationDelta = 0
+            pendingGestureEnded = false
         }
 
         sessionItems = list
@@ -783,7 +814,8 @@ final class AppSwitcher: ObservableObject {
         // A cache miss is rebuilt after the tap callback returns. If the user
         // already released the shortcut during that work, preserve quick-flick
         // behavior by committing immediately without flashing the panel.
-        if shortcut.requiredModifiersHeld(in: CGEventSource.flagsState(.combinedSessionState)) {
+        if !pendingGestureEnded,
+           shortcut.requiredModifiersHeld(in: CGEventSource.flagsState(.combinedSessionState)) {
             scheduleShowPanel()
         } else {
             commitSession()
@@ -1200,9 +1232,11 @@ final class AppSwitcher: ObservableObject {
                                                          resolve: WindowEnumerator.refreshedSwitcherCandidate)
         let source = sessionSourceContext
         let previousWindowID = sessionStartWindowID
+        let hasQueuedGesture = routeLock.withLock { routeOwnership.hasPendingRoute }
         endSession()
         if let selection {
             recordUse(selection, previous: previousWindowID)
+            if hasQueuedGesture { queuedSessionSource = selection }
             WindowActivator.activate(selection,
                                      sourceWasFullscreen: source?.isFullscreen ?? false,
                                      sourcePID: source?.pid,

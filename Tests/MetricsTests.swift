@@ -1807,8 +1807,35 @@ struct MetricsTests {
         let begunPendingRoute = pendingRoute.beginSession(pendingToken)
         expect(begunPendingRoute?.route == expectedAppsRoute
                && begunPendingRoute?.navigationDelta == 2
+               && begunPendingRoute?.gestureEnded == false
                && pendingRoute.sessionActive,
-               "App Switcher applies coalesced navigation once when startup finishes")
+               "App Switcher coalesces held-modifier repeats when startup finishes")
+
+        var separateGestures = SwitcherRouteOwnership()
+        separateGestures.setTapLive(true)
+        guard case let .accepted(firstGestureToken) = separateGestures.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns the first cold-start gesture")
+            return
+        }
+        expect(separateGestures.claim(firstGestureToken) == expectedAppsRoute,
+               "App Switcher preserves the consumed first gesture during startup")
+        expect(separateGestures.observePendingModifierFlags([]),
+               "App Switcher records modifier release before a session exists")
+        guard case let .accepted(secondGestureToken) = separateGestures.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher starts a new route after modifier release")
+            return
+        }
+        let firstGesture = separateGestures.beginSession(firstGestureToken)
+        expect(firstGesture?.navigationDelta == 0 && firstGesture?.gestureEnded == true,
+               "App Switcher keeps A to B as one completed physical gesture")
+        separateGestures.setSessionActive(false)
+        expect(separateGestures.claim(secondGestureToken) == expectedAppsRoute,
+               "App Switcher retains the queued B to A gesture after the first commit")
+        expect(separateGestures.observePendingModifierFlags([]),
+               "App Switcher observes release for the queued gesture")
+        let secondGesture = separateGestures.beginSession(secondGestureToken)
+        expect(secondGesture?.navigationDelta == 0 && secondGesture?.gestureEnded == true,
+               "App Switcher routes A to B to A as two switches, not one two-step session")
 
         var tornDownRoute = SwitcherRouteOwnership()
         tornDownRoute.setTapLive(true)

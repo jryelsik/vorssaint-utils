@@ -40,7 +40,8 @@ enum SwitcherPendingRouteAcceptance: Equatable {
 
 /// Owns the shortcut between the tap swallowing it and the main thread
 /// establishing a session. Repeats remain on the tap thread and collapse into
-/// one navigation delta while a cold Accessibility walk is in progress.
+/// one navigation delta while a cold Accessibility walk is in progress;
+/// modifier release queues the next physical gesture as a separate session.
 struct SwitcherRouteOwnership {
     private(set) var sessionActive = false
     private(set) var tapLive = false
@@ -51,12 +52,13 @@ struct SwitcherRouteOwnership {
         let route: SwitcherInitialRoute
         var navigationDelta = 0
         var claimed = false
+        var gestureEnded = false
     }
 
     private var generation: UInt64 = 0
-    private var pending: Pending?
+    private var pending: [Pending] = []
 
-    var hasPendingRoute: Bool { pending != nil }
+    var hasPendingRoute: Bool { !pending.isEmpty }
 
     mutating func setTapLive(_ live: Bool) {
         tapLive = live
@@ -69,61 +71,75 @@ struct SwitcherRouteOwnership {
     }
 
     mutating func setSessionActive(_ active: Bool) {
+        // A gesture accepted after the previous modifier release belongs to
+        // the next session and must survive the first session ending.
         sessionActive = active
-        if !active { invalidatePendingRoute() }
     }
 
     mutating func accept(_ route: SwitcherInitialRoute) -> SwitcherPendingRouteAcceptance {
         guard tapLive, !capturing, !sessionActive else { return .rejected }
-        if var pending {
-            guard pending.route.shortcut == route.shortcut,
-                  pending.route.scope == route.scope
+        if var current = pending.last, !current.gestureEnded {
+            guard current.route.shortcut == route.shortcut,
+                  current.route.scope == route.scope
             else { return .rejected }
-            pending.navigationDelta += route.reversed ? -1 : 1
-            self.pending = pending
+            current.navigationDelta += route.reversed ? -1 : 1
+            pending[pending.count - 1] = current
             return .coalesced
         }
         generation &+= 1
-        pending = Pending(token: generation, route: route)
+        pending.append(Pending(token: generation, route: route))
         return .accepted(generation)
     }
 
     /// Returns nil when there is no pending owner and the caller must perform
     /// the live Accessibility check before accepting a new route.
     mutating func coalesceIfPending(_ route: SwitcherInitialRoute) -> SwitcherPendingRouteAcceptance? {
-        guard pending != nil else { return nil }
+        guard !pending.isEmpty else { return nil }
         return accept(route)
+    }
+
+    /// Records the release even while main is still building the session.
+    /// The next press is then a new gesture instead of another navigation step.
+    @discardableResult
+    mutating func observePendingModifierFlags(_ flags: CGEventFlags) -> Bool {
+        guard let index = pending.lastIndex(where: { !$0.gestureEnded }),
+              !pending[index].route.shortcut.requiredModifiersHeld(in: flags)
+        else { return false }
+        pending[index].gestureEnded = true
+        return true
     }
 
     mutating func claim(_ token: UInt64) -> SwitcherInitialRoute? {
         guard tapLive, !capturing, !sessionActive,
-              var pending, pending.token == token, !pending.claimed
+              pending.first?.token == token, !pending[0].claimed
         else { return nil }
-        pending.claimed = true
-        self.pending = pending
-        return pending.route
+        pending[0].claimed = true
+        return pending[0].route
     }
 
     /// Atomically hands routing to the new session after its first selection
     /// exists. Repeats can keep accumulating until this exact transition.
-    mutating func beginSession(_ token: UInt64) -> (route: SwitcherInitialRoute, navigationDelta: Int)? {
+    mutating func beginSession(_ token: UInt64) -> (route: SwitcherInitialRoute,
+                                                    navigationDelta: Int,
+                                                    gestureEnded: Bool)? {
         guard tapLive, !capturing, !sessionActive,
-              let pending, pending.token == token, pending.claimed
+              pending.first?.token == token, pending[0].claimed
         else { return nil }
-        self.pending = nil
+        let accepted = pending.removeFirst()
         sessionActive = true
-        return (pending.route, pending.navigationDelta)
+        return (accepted.route, accepted.navigationDelta, accepted.gestureEnded)
     }
 
     mutating func invalidatePendingRoute() {
-        guard pending != nil else { return }
-        pending = nil
+        guard !pending.isEmpty else { return }
+        pending = []
         generation &+= 1
     }
 
     mutating func invalidatePendingRoute(token: UInt64) {
-        guard pending?.token == token else { return }
-        invalidatePendingRoute()
+        guard let index = pending.firstIndex(where: { $0.token == token }) else { return }
+        pending.remove(at: index)
+        generation &+= 1
     }
 }
 
