@@ -32,6 +32,12 @@ struct SwitcherInitialRoute: Equatable {
     let reversed: Bool
 }
 
+struct SwitcherPendingNavigation: Equatable {
+    let command: SwitcherSessionScope
+    let delta: Int
+    let wrapping: Bool
+}
+
 enum SwitcherPendingRouteAcceptance: Equatable {
     case accepted(UInt64)
     case coalesced
@@ -47,26 +53,35 @@ enum SwitcherMatchedRouteDecision: Equatable {
 }
 
 /// Owns the shortcut between the tap swallowing it and the main thread
-/// establishing a session. Repeats remain on the tap thread and collapse into
-/// one navigation delta while a cold Accessibility walk is in progress;
-/// modifier release queues the next physical gesture as a separate session.
+/// establishing a session. Navigation remains on the tap thread while a cold
+/// Accessibility walk is in progress; modifier release queues the next
+/// physical gesture as a separate session.
 struct SwitcherRouteOwnership {
-    private(set) var sessionActive = false
     private(set) var tapLive = false
     private(set) var capturing = false
 
     private struct Pending {
         let token: UInt64
         let route: SwitcherInitialRoute
-        var navigationDelta = 0
+        var navigation: [SwitcherPendingNavigation] = []
         var claimed = false
         var gestureEnded = false
     }
 
+    private struct Active {
+        let token: UInt64
+        let shortcut: GlobalShortcut
+    }
+
     private var generation: UInt64 = 0
     private var pending: [Pending] = []
+    private var active: Active?
 
     var hasPendingRoute: Bool { !pending.isEmpty }
+    var sessionActive: Bool { active != nil }
+    var routingShortcut: GlobalShortcut? {
+        active?.shortcut ?? pending.last(where: { !$0.gestureEnded })?.route.shortcut
+    }
 
     mutating func setTapLive(_ live: Bool) {
         tapLive = live
@@ -78,19 +93,30 @@ struct SwitcherRouteOwnership {
         if value { invalidatePendingRoute() }
     }
 
-    mutating func setSessionActive(_ active: Bool) {
-        // A gesture accepted after the previous modifier release belongs to
-        // the next session and must survive the first session ending.
-        sessionActive = active
+    mutating func endSession() {
+        active = nil
     }
 
-    mutating func accept(_ route: SwitcherInitialRoute) -> SwitcherPendingRouteAcceptance {
+    mutating func accept(_ route: SwitcherInitialRoute,
+                         isRepeat: Bool = false) -> SwitcherPendingRouteAcceptance {
         guard tapLive, !capturing, !sessionActive else { return .rejected }
         if var current = pending.last, !current.gestureEnded {
-            guard current.route.shortcut == route.shortcut,
-                  current.route.scope == route.scope
-            else { return .rejected }
-            current.navigationDelta += route.reversed ? -1 : 1
+            let operation = SwitcherPendingNavigation(command: route.scope,
+                                                      delta: route.reversed ? -1 : 1,
+                                                      wrapping: !isRepeat)
+            if isRepeat,
+               let last = current.navigation.last,
+               last.command == operation.command,
+               last.wrapping == operation.wrapping,
+               last.delta.signum() == operation.delta.signum() {
+                current.navigation[current.navigation.count - 1] = SwitcherPendingNavigation(
+                    command: last.command,
+                    delta: last.delta + operation.delta,
+                    wrapping: false
+                )
+            } else {
+                current.navigation.append(operation)
+            }
             pending[pending.count - 1] = current
             return .coalesced
         }
@@ -103,11 +129,12 @@ struct SwitcherRouteOwnership {
     /// pass may request the live Accessibility check; the second either owns a
     /// new route or observes that main established the session in between.
     mutating func decideMatchedRoute(_ route: SwitcherInitialRoute,
+                                     isRepeat: Bool = false,
                                      allowingNewRoute: Bool) -> SwitcherMatchedRouteDecision {
         guard tapLive, !capturing else { return .rejected }
         if sessionActive { return .activeSession }
         if pending.isEmpty, !allowingNewRoute { return .needsAccessibility }
-        switch accept(route) {
+        switch accept(route, isRepeat: isRepeat) {
         case let .accepted(token): return .accepted(token)
         case .coalesced: return .coalesced
         case .rejected: return .rejected
@@ -136,14 +163,33 @@ struct SwitcherRouteOwnership {
     /// Atomically hands routing to the new session after its first selection
     /// exists. Repeats can keep accumulating until this exact transition.
     mutating func beginSession(_ token: UInt64) -> (route: SwitcherInitialRoute,
-                                                    navigationDelta: Int,
-                                                    gestureEnded: Bool)? {
+                                                    navigation: [SwitcherPendingNavigation],
+                                                    gestureEnded: Bool,
+                                                    token: UInt64)? {
         guard tapLive, !capturing, !sessionActive,
               pending.first?.token == token, pending[0].claimed
         else { return nil }
         let accepted = pending.removeFirst()
-        sessionActive = true
-        return (accepted.route, accepted.navigationDelta, accepted.gestureEnded)
+        if !accepted.gestureEnded {
+            active = Active(token: accepted.token, shortcut: accepted.route.shortcut)
+        }
+        return (accepted.route, accepted.navigation, accepted.gestureEnded, accepted.token)
+    }
+
+    mutating func beginSession(shortcut: GlobalShortcut) -> UInt64 {
+        generation &+= 1
+        active = Active(token: generation, shortcut: shortcut)
+        return generation
+    }
+
+    /// Relinquishes routing before main validates or activates the selected
+    /// window. A following gesture can then be consumed while AX is busy.
+    mutating func releaseActiveSession(for flags: CGEventFlags) -> UInt64? {
+        guard let active,
+              !active.shortcut.requiredModifiersHeld(in: flags)
+        else { return nil }
+        self.active = nil
+        return active.token
     }
 
     mutating func invalidatePendingRoute() {
@@ -421,10 +467,20 @@ enum SwitcherSupport {
     static func eligibleCandidate(_ item: SwitcherItem,
                                   in eligibleItems: [SwitcherItem],
                                   groupedByApp: Bool) -> SwitcherItem? {
+        if item.windowID == nil {
+            return eligibleItems.first { $0.pid == item.pid && $0.windowID != nil }
+                ?? eligibleItems.first { $0.pid == item.pid }
+        }
         if groupedByApp {
             return eligibleItems.first { $0.pid == item.pid }
         }
         return eligibleItems.first { $0.id == item.id }
+    }
+
+    static func sessionWindowItems(cacheDisposition: SwitcherCacheDisposition,
+                                   cached: [SwitcherItem],
+                                   rebuild: () -> [SwitcherItem]) -> [SwitcherItem] {
+        cacheDisposition == .rebuild ? rebuild() : cached
     }
 
     static func initialRoute(appsShortcut: GlobalShortcut,
