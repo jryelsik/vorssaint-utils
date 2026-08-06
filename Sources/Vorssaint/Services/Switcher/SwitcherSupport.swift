@@ -73,6 +73,17 @@ struct SwitcherRouteClaim: Equatable {
     let source: SwitcherRouteSource?
 }
 
+struct SwitcherActivationWindowTarget: Equatable {
+    let generation: UInt64
+    let windowID: CGWindowID
+    let windowOwnerPID: pid_t
+}
+
+enum SwitcherActivationConfirmation {
+    static let probeDelays: [TimeInterval] = [0, 0.12, 0.18, 0.38, 0.68]
+    static let timeout: TimeInterval = 0.8
+}
+
 /// Owns the shortcut between the tap swallowing it and the main thread
 /// establishing a session. Navigation remains on the tap thread while a cold
 /// Accessibility walk is in progress; modifier release queues the next
@@ -273,9 +284,32 @@ struct SwitcherRouteOwnership {
         }
     }
 
-    mutating func confirmActivation(pid: pid_t) {
-        guard let activation, activation.source.pid == pid else { return }
+    mutating func confirmAppActivation(pid: pid_t) {
+        guard let activation,
+              activation.source.windowID == nil,
+              activation.source.pid == pid
+        else { return }
         finishActivation(activation.generation)
+    }
+
+    func windowActivationTarget(generation token: UInt64) -> SwitcherActivationWindowTarget? {
+        guard let activation,
+              activation.generation == token,
+              let windowID = activation.source.windowID
+        else { return nil }
+        return SwitcherActivationWindowTarget(
+            generation: activation.generation,
+            windowID: windowID,
+            windowOwnerPID: activation.source.windowOwnerPID ?? activation.source.pid
+        )
+    }
+
+    mutating func confirmWindowActivation(generation token: UInt64,
+                                          focusedWindowID: CGWindowID?) {
+        guard let target = windowActivationTarget(generation: token),
+              target.windowID == focusedWindowID
+        else { return }
+        finishActivation(target.generation)
     }
 
     /// Claims an active-event handoff only if the session observed by the tap

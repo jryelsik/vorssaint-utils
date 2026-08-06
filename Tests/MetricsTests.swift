@@ -1939,10 +1939,14 @@ struct MetricsTests {
                                                    title: "Target",
                                                    appName: "Target App",
                                                    pid: 909,
+                                                   windowOwnerPID: 919,
                                                    isOnScreen: true,
                                                    frame: CGRect(x: 10, y: 10,
                                                                  width: 800, height: 600))
         let activationSource = SwitcherRouteSource(activationTarget)
+        expect(SwitcherActivationConfirmation.probeDelays == [0, 0.12, 0.18, 0.38, 0.68]
+               && SwitcherActivationConfirmation.timeout == 0.8,
+               "App Switcher probes ordinary and fullscreen focus before its bounded timeout")
         var releasedTeardown = SwitcherRouteOwnership()
         releasedTeardown.setTapLive(true)
         guard case let .accepted(releasedTeardownToken) = releasedTeardown.accept(expectedAppsRoute) else {
@@ -2009,13 +2013,28 @@ struct MetricsTests {
         _ = publishedSourceRoute.claimReleasedSession(publishedSessionToken)
         _ = publishedSourceRoute.publishActivationSource(activationSource,
                                                          generation: publishedSessionToken)
+        expect(publishedSourceRoute.windowActivationTarget(generation: publishedSessionToken)
+               == SwitcherActivationWindowTarget(generation: publishedSessionToken,
+                                                  windowID: 901,
+                                                  windowOwnerPID: 919),
+               "App Switcher probes an embedded target through its exact window owner")
+        publishedSourceRoute.confirmAppActivation(pid: 909)
+        publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken,
+                                                     focusedWindowID: nil)
+        publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken,
+                                                     focusedWindowID: 900)
         guard case let .accepted(afterPublicationToken) = publishedSourceRoute.accept(expectedAppsRoute) else {
             expect(false, "App Switcher queues a gesture while activation is in flight")
             return
         }
         expect(publishedSourceRoute.claim(afterPublicationToken)?.source == activationSource,
-               "App Switcher binds a post-publication gesture while focus confirmation is delayed")
-        publishedSourceRoute.finishActivation(publishedSessionToken)
+               "App Switcher retains an exact source through app activation and delayed window focus")
+        publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken + 1,
+                                                     focusedWindowID: 901)
+        expect(publishedSourceRoute.windowActivationTarget(generation: publishedSessionToken) != nil,
+               "App Switcher ignores exact-window confirmation from a stale generation")
+        publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken,
+                                                     focusedWindowID: 901)
         publishedSourceRoute.invalidatePendingRoute(token: afterPublicationToken)
         guard case let .accepted(afterConfirmationToken) = publishedSourceRoute.accept(expectedAppsRoute) else {
             expect(false, "App Switcher accepts a later gesture after activation confirmation")
@@ -2023,6 +2042,48 @@ struct MetricsTests {
         }
         expect(publishedSourceRoute.claim(afterConfirmationToken)?.source == nil,
                "App Switcher does not leak a confirmed activation source into later gestures")
+
+        var appOnlyActivation = SwitcherRouteOwnership()
+        appOnlyActivation.setTapLive(true)
+        guard case let .accepted(appOnlySessionToken) = appOnlyActivation.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before app-only activation")
+            return
+        }
+        _ = appOnlyActivation.claim(appOnlySessionToken)
+        _ = appOnlyActivation.beginSession(appOnlySessionToken)
+        _ = appOnlyActivation.releaseActiveSession(for: [])
+        _ = appOnlyActivation.claimReleasedSession(appOnlySessionToken)
+        _ = appOnlyActivation.publishActivationSource(
+            SwitcherRouteSource(.appOnly(appName: "Target App", pid: 909)),
+            generation: appOnlySessionToken
+        )
+        appOnlyActivation.confirmAppActivation(pid: 909)
+        guard case let .accepted(afterAppActivationToken) = appOnlyActivation.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher accepts a route after app-only activation")
+            return
+        }
+        expect(appOnlyActivation.claim(afterAppActivationToken)?.source == nil,
+               "App Switcher retires an app-only source when its application activates")
+
+        var timedOutActivation = SwitcherRouteOwnership()
+        timedOutActivation.setTapLive(true)
+        guard case let .accepted(timedOutSessionToken) = timedOutActivation.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before activation timeout")
+            return
+        }
+        _ = timedOutActivation.claim(timedOutSessionToken)
+        _ = timedOutActivation.beginSession(timedOutSessionToken)
+        _ = timedOutActivation.releaseActiveSession(for: [])
+        _ = timedOutActivation.claimReleasedSession(timedOutSessionToken)
+        _ = timedOutActivation.publishActivationSource(activationSource,
+                                                        generation: timedOutSessionToken)
+        timedOutActivation.finishActivation(timedOutSessionToken)
+        guard case let .accepted(afterTimeoutToken) = timedOutActivation.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher accepts a route after activation timeout")
+            return
+        }
+        expect(timedOutActivation.claim(afterTimeoutToken)?.source == nil,
+               "App Switcher safely retires an unconfirmed exact source at the activation timeout")
 
         let replacementTarget = SwitcherItem.window(id: 902,
                                                     title: "Replacement",

@@ -93,6 +93,9 @@ final class AppSwitcher: ObservableObject {
     private var cacheRefreshOwnership = SwitcherCacheRefreshOwnership()
     private let cacheRefreshQueue = DispatchQueue(label: "com.vorssaint.switcher-window-cache",
                                                   qos: .userInitiated)
+    private let activationProbeQueue = DispatchQueue(label: "com.vorssaint.switcher-activation-probe",
+                                                     qos: .userInitiated,
+                                                     attributes: .concurrent)
     private var cacheRefreshRetryCount = 0
     private var workspaceTokens: [NSObjectProtocol] = []
     private static let maximumWindowCacheAge: TimeInterval = 2
@@ -884,7 +887,7 @@ final class AppSwitcher: ObservableObject {
                        let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
                             as? NSRunningApplication {
                         self.routeLock.withLock {
-                            self.routeOwnership.confirmActivation(pid: app.processIdentifier)
+                            self.routeOwnership.confirmAppActivation(pid: app.processIdentifier)
                         }
                     }
                     self.invalidateCacheRefreshWork()
@@ -1327,13 +1330,38 @@ final class AppSwitcher: ObservableObject {
                                      sourcePID: source?.pid,
                                      sourceWindowID: source?.isFullscreen == true ? nil : source?.windowID,
                                      sourceWindowOwnerPID: source?.windowOwnerPID)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            scheduleActivationConfirmationProbes(generation: generation)
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + SwitcherActivationConfirmation.timeout
+            ) { [weak self] in
                 guard let self else { return }
                 self.routeLock.withLock { self.routeOwnership.finishActivation(generation) }
             }
         } else {
             routeLock.withLock { routeOwnership.completeReleasedSession(generation) }
             clearSessionState(preservingRouteLifecycle: true)
+        }
+    }
+
+    /// Exact-window activation cannot be inferred from an app notification.
+    /// Probe around the activator's ordinary and fullscreen focus passes, then
+    /// let the bounded activation timeout retire a target that never confirms.
+    private func scheduleActivationConfirmationProbes(generation: UInt64) {
+        for delay in SwitcherActivationConfirmation.probeDelays {
+            activationProbeQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self,
+                      let target = self.routeLock.withLock({
+                          self.routeOwnership.windowActivationTarget(generation: generation)
+                      })
+                else { return }
+                let focusedWindowID = WindowActivator.focusedWindowID(for: target.windowOwnerPID)
+                self.routeLock.withLock {
+                    self.routeOwnership.confirmWindowActivation(
+                        generation: target.generation,
+                        focusedWindowID: focusedWindowID
+                    )
+                }
+            }
         }
     }
 
