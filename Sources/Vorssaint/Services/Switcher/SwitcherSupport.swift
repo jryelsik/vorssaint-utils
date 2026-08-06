@@ -249,6 +249,15 @@ struct SwitcherRouteOwnership {
         return active.token
     }
 
+    /// Releases only the session observed by the tap callback. A delayed key
+    /// must never commit a replacement session that claimed routing meanwhile.
+    mutating func releaseActiveSession(expectedToken token: UInt64) -> UInt64? {
+        guard active?.token == token else { return nil }
+        self.active = nil
+        released = Released(token: token)
+        return token
+    }
+
     mutating func claimReleasedSession(_ token: UInt64) -> Bool {
         guard tapLive, !capturing, released?.token == token,
               released?.claimed == false else { return false }
@@ -357,10 +366,16 @@ enum SwitcherCacheDisposition: Equatable {
 /// snapshot capture happen on main, the worker holds only the token, and a
 /// late completion can store results only while that exact generation lives.
 struct SwitcherCacheRefreshOwnership {
+    struct Completion: Equatable {
+        let installsResult: Bool
+        let schedulesRerun: Bool
+    }
+
     private(set) var enabled = false
     private var generation: UInt64 = 0
     private var scheduledToken: UInt64?
     private var workerToken: UInt64?
+    private var rerunRequested = false
 
     mutating func setEnabled(_ value: Bool) {
         enabled = value
@@ -368,7 +383,12 @@ struct SwitcherCacheRefreshOwnership {
     }
 
     mutating func schedule(sessionActive: Bool) -> UInt64? {
-        guard enabled, !sessionActive, scheduledToken == nil, workerToken == nil else { return nil }
+        guard enabled, !sessionActive else { return nil }
+        if workerToken != nil {
+            rerunRequested = true
+            return nil
+        }
+        guard scheduledToken == nil else { return nil }
         generation &+= 1
         scheduledToken = generation
         return generation
@@ -381,16 +401,18 @@ struct SwitcherCacheRefreshOwnership {
         return true
     }
 
-    mutating func completeWorker(_ token: UInt64) -> Bool {
-        guard enabled, workerToken == token, generation == token else { return false }
+    mutating func completeWorker(_ token: UInt64, sessionActive: Bool) -> Completion? {
+        guard workerToken == token else { return nil }
         workerToken = nil
-        return true
+        let completion = Completion(installsResult: enabled && generation == token,
+                                    schedulesRerun: enabled && !sessionActive && rerunRequested)
+        rerunRequested = false
+        return completion
     }
 
     mutating func invalidate() {
         generation &+= 1
         scheduledToken = nil
-        workerToken = nil
     }
 }
 

@@ -1887,6 +1887,40 @@ struct MetricsTests {
         expect(handoffRoute.accept(expectedAppsRoute) != .rejected,
                "App Switcher accepts a new gesture while release validation is pending")
 
+        var enterRelease = SwitcherRouteOwnership()
+        enterRelease.setTapLive(true)
+        guard case let .accepted(enterSessionToken) = enterRelease.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before Enter commits it")
+            return
+        }
+        _ = enterRelease.claim(enterSessionToken)
+        _ = enterRelease.beginSession(enterSessionToken)
+        expect(enterRelease.releaseActiveSession(expectedToken: enterSessionToken)
+               == enterSessionToken,
+               "App Switcher Enter releases exactly the generation observed by the tap")
+        expect(enterRelease.accept(expectedAppsRoute) != .rejected,
+               "App Switcher accepts a new gesture before Enter validation completes")
+
+        var staleEnterRelease = SwitcherRouteOwnership()
+        staleEnterRelease.setTapLive(true)
+        guard case let .accepted(staleEnterToken) = staleEnterRelease.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before an Enter handoff race")
+            return
+        }
+        _ = staleEnterRelease.claim(staleEnterToken)
+        _ = staleEnterRelease.beginSession(staleEnterToken)
+        staleEnterRelease.invalidateLifecycle()
+        staleEnterRelease.setTapLive(true)
+        guard case let .accepted(replacementEnterToken) = staleEnterRelease.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a replacement route after Enter becomes stale")
+            return
+        }
+        _ = staleEnterRelease.claim(replacementEnterToken)
+        _ = staleEnterRelease.beginSession(replacementEnterToken)
+        expect(staleEnterRelease.releaseActiveSession(expectedToken: staleEnterToken) == nil
+               && staleEnterRelease.activeToken == replacementEnterToken,
+               "App Switcher stale Enter cannot release a replacement session")
+
         var separateGestures = SwitcherRouteOwnership()
         separateGestures.setTapLive(true)
         guard case let .accepted(firstGestureToken) = separateGestures.accept(expectedAppsRoute) else {
@@ -2169,13 +2203,47 @@ struct MetricsTests {
                && cacheRefresh.beginWorker(switcherFirstRefresh!, sessionActive: false),
                "App Switcher starts a scheduled cache worker without main-thread enumeration")
         cacheRefresh.invalidate()
-        expect(!cacheRefresh.completeWorker(switcherFirstRefresh!),
-               "App Switcher discards a cache worker that a shortcut superseded")
+        expect(cacheRefresh.schedule(sessionActive: false) == nil,
+               "App Switcher coalesces refresh demand behind an occupied worker")
+        cacheRefresh.invalidate()
+        expect(cacheRefresh.schedule(sessionActive: false) == nil,
+               "App Switcher never queues a second worker after repeated invalidation")
+        let staleRefreshCompletion = cacheRefresh.completeWorker(switcherFirstRefresh!,
+                                                                 sessionActive: false)
+        expect(staleRefreshCompletion
+               == SwitcherCacheRefreshOwnership.Completion(installsResult: false,
+                                                            schedulesRerun: true),
+               "App Switcher rejects stale results and requests exactly one latest refresh")
         let switcherSecondRefresh = cacheRefresh.schedule(sessionActive: false)
         expect(switcherSecondRefresh != nil && switcherSecondRefresh! > switcherFirstRefresh!
                && cacheRefresh.beginWorker(switcherSecondRefresh!, sessionActive: false)
-               && cacheRefresh.completeWorker(switcherSecondRefresh!),
+               && cacheRefresh.completeWorker(switcherSecondRefresh!, sessionActive: false)
+                    == SwitcherCacheRefreshOwnership.Completion(installsResult: true,
+                                                                 schedulesRerun: false),
                "App Switcher stores only the newest cache refresh generation")
+
+        var activeSessionRefresh = SwitcherCacheRefreshOwnership()
+        activeSessionRefresh.setEnabled(true)
+        let activeSessionToken = activeSessionRefresh.schedule(sessionActive: false)!
+        _ = activeSessionRefresh.beginWorker(activeSessionToken, sessionActive: false)
+        activeSessionRefresh.invalidate()
+        _ = activeSessionRefresh.schedule(sessionActive: false)
+        expect(activeSessionRefresh.completeWorker(activeSessionToken, sessionActive: true)
+               == SwitcherCacheRefreshOwnership.Completion(installsResult: false,
+                                                            schedulesRerun: false),
+               "App Switcher an active session suppresses a stale worker rerun")
+
+        var stoppedRefresh = SwitcherCacheRefreshOwnership()
+        stoppedRefresh.setEnabled(true)
+        let stoppedToken = stoppedRefresh.schedule(sessionActive: false)!
+        _ = stoppedRefresh.beginWorker(stoppedToken, sessionActive: false)
+        stoppedRefresh.invalidate()
+        _ = stoppedRefresh.schedule(sessionActive: false)
+        stoppedRefresh.setEnabled(false)
+        expect(stoppedRefresh.completeWorker(stoppedToken, sessionActive: false)
+               == SwitcherCacheRefreshOwnership.Completion(installsResult: false,
+                                                            schedulesRerun: false),
+               "App Switcher teardown clears stale worker demand without a rerun")
         cacheRefresh.setEnabled(false)
         expect(cacheRefresh.schedule(sessionActive: false) == nil,
                "App Switcher teardown prevents cache refresh scheduling")

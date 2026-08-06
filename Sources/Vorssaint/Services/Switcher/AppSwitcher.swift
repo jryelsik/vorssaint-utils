@@ -487,6 +487,21 @@ final class AppSwitcher: ObservableObject {
     private func routeActiveEvent(type: CGEventType,
                                   event: CGEvent,
                                   expectedSessionToken: UInt64?) -> Unmanaged<CGEvent>? {
+        if type == .keyDown,
+           event.getIntegerValueField(.keyboardEventKeycode) == KeyCode.enter {
+            guard let expectedSessionToken else { return Unmanaged.passUnretained(event) }
+            let released = routeLock.withLock {
+                routeOwnership.releaseActiveSession(expectedToken: expectedSessionToken)
+            }
+            if let released {
+                DispatchQueue.main.async { [weak self] in
+                    self?.commitReleasedSession(generation: released)
+                }
+            }
+            // The tap already observed an owned session. A stale Enter is
+            // consumed too, but cannot release the replacement generation.
+            return nil
+        }
         var verdict: Unmanaged<CGEvent>?
         DispatchQueue.main.sync {
             verdict = self.handle(type: type,
@@ -926,23 +941,31 @@ final class AppSwitcher: ObservableObject {
                 let items = WindowEnumerator.listWindows(from: snapshot)
                 DispatchQueue.main.async {
                     guard let self,
-                          self.cacheRefreshOwnership.completeWorker(token) else { return }
-                    let after = WindowEnumerator.switcherFingerprint()
-                    if before == after {
-                        self.storeCachedWindows(items, fingerprint: after)
-                        self.cacheRefreshRetryCount = 0
-                    } else {
-                        self.cachedWindowItems = items
-                        self.cachedWindowFingerprint = nil
-                        let retry = self.cacheRefreshRetryCount
-                        self.cacheRefreshRetryCount += 1
-                        if let delay = SwitcherSupport.cacheRefreshRetryDelay(
-                            stable: false,
-                            retryCount: retry,
+                          let completion = self.cacheRefreshOwnership.completeWorker(
+                            token,
                             sessionActive: self.sessionActive
-                        ) {
-                            self.scheduleWindowCacheRefresh(after: delay)
+                          ) else { return }
+                    if completion.installsResult {
+                        let after = WindowEnumerator.switcherFingerprint()
+                        if before == after {
+                            self.storeCachedWindows(items, fingerprint: after)
+                            self.cacheRefreshRetryCount = 0
+                        } else {
+                            self.cachedWindowItems = items
+                            self.cachedWindowFingerprint = nil
+                            let retry = self.cacheRefreshRetryCount
+                            self.cacheRefreshRetryCount += 1
+                            if let delay = SwitcherSupport.cacheRefreshRetryDelay(
+                                stable: false,
+                                retryCount: retry,
+                                sessionActive: self.sessionActive
+                            ) {
+                                self.scheduleWindowCacheRefresh(after: delay)
+                            }
                         }
+                    }
+                    if completion.schedulesRerun {
+                        self.scheduleWindowCacheRefresh()
                     }
                 }
             }
