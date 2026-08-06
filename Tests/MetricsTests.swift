@@ -1801,7 +1801,7 @@ struct MetricsTests {
             return
         }
         expect(pendingRoute.accept(expectedAppsRoute) == .coalesced
-               && pendingRoute.claim(pendingToken) == expectedAppsRoute
+               && pendingRoute.claim(pendingToken)?.route == expectedAppsRoute
                && pendingRoute.accept(expectedAppsRoute, isRepeat: true) == .coalesced
                && pendingRoute.accept(expectedAppsRoute, isRepeat: true) == .coalesced,
                "App Switcher queues fresh presses and compacts held repeats during startup")
@@ -1880,8 +1880,10 @@ struct MetricsTests {
         expect(tapObservedPendingRoute && decisionAfterMainWonHandoff == .activeSession,
                "App Switcher consumes a matched repeat when main wins between observation and acceptance")
         let releasedHandoffToken = handoffRoute.releaseActiveSession(for: [])
-        expect(releasedHandoffToken == handoffToken && !handoffRoute.sessionActive,
-               "App Switcher relinquishes session ownership before release validation")
+        expect(releasedHandoffToken == handoffToken
+               && !handoffRoute.sessionActive
+               && handoffRoute.hasSessionLifecycle,
+               "App Switcher keeps lifecycle ownership while release validation runs")
         expect(handoffRoute.accept(expectedAppsRoute) != .rejected,
                "App Switcher accepts a new gesture while release validation is pending")
 
@@ -1891,7 +1893,7 @@ struct MetricsTests {
             expect(false, "App Switcher owns the first cold-start gesture")
             return
         }
-        expect(separateGestures.claim(firstGestureToken) == expectedAppsRoute,
+        expect(separateGestures.claim(firstGestureToken)?.route == expectedAppsRoute,
                "App Switcher preserves the consumed first gesture during startup")
         expect(separateGestures.observePendingModifierFlags([]),
                "App Switcher records modifier release before a session exists")
@@ -1902,7 +1904,7 @@ struct MetricsTests {
         let firstGesture = separateGestures.beginSession(firstGestureToken)
         expect(firstGesture?.navigation.isEmpty == true && firstGesture?.gestureEnded == true,
                "App Switcher keeps A to B as one completed physical gesture")
-        expect(separateGestures.claim(secondGestureToken) == expectedAppsRoute,
+        expect(separateGestures.claim(secondGestureToken)?.route == expectedAppsRoute,
                "App Switcher retains the queued B to A gesture after the first commit")
         expect(separateGestures.observePendingModifierFlags([]),
                "App Switcher observes release for the queued gesture")
@@ -1926,12 +1928,196 @@ struct MetricsTests {
         }
         expect(replacementToken > tornDownToken
                && tornDownRoute.claim(tornDownToken) == nil
-               && tornDownRoute.claim(replacementToken) == expectedAppsRoute,
+               && tornDownRoute.claim(replacementToken)?.route == expectedAppsRoute,
                "App Switcher tokens keep stale main-thread work from claiming a new route")
         tornDownRoute.invalidatePendingRoute(token: replacementToken)
         expect(tornDownRoute.beginSession(replacementToken) == nil
                && !tornDownRoute.sessionActive,
                "App Switcher releases ownership after empty or failed session startup")
+
+        let activationTarget = SwitcherItem.window(id: 901,
+                                                   title: "Target",
+                                                   appName: "Target App",
+                                                   pid: 909,
+                                                   isOnScreen: true,
+                                                   frame: CGRect(x: 10, y: 10,
+                                                                 width: 800, height: 600))
+        let activationSource = SwitcherRouteSource(activationTarget)
+        var releasedTeardown = SwitcherRouteOwnership()
+        releasedTeardown.setTapLive(true)
+        guard case let .accepted(releasedTeardownToken) = releasedTeardown.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before release teardown")
+            return
+        }
+        _ = releasedTeardown.claim(releasedTeardownToken)
+        _ = releasedTeardown.beginSession(releasedTeardownToken)
+        _ = releasedTeardown.releaseActiveSession(for: [])
+        expect(releasedTeardown.claimReleasedSession(releasedTeardownToken),
+               "App Switcher claims the exact released generation before validation")
+        releasedTeardown.setTapLive(false)
+        expect(!releasedTeardown.hasSessionLifecycle
+               && !releasedTeardown.publishActivationSource(activationSource,
+                                                            generation: releasedTeardownToken),
+               "App Switcher teardown invalidates released validation before activation")
+
+        var releasedCapture = SwitcherRouteOwnership()
+        releasedCapture.setTapLive(true)
+        guard case let .accepted(releasedCaptureToken) = releasedCapture.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before shortcut capture")
+            return
+        }
+        _ = releasedCapture.claim(releasedCaptureToken)
+        _ = releasedCapture.beginSession(releasedCaptureToken)
+        _ = releasedCapture.releaseActiveSession(for: [])
+        _ = releasedCapture.claimReleasedSession(releasedCaptureToken)
+        releasedCapture.setCapturing(true)
+        expect(!releasedCapture.hasSessionLifecycle
+               && !releasedCapture.publishActivationSource(activationSource,
+                                                           generation: releasedCaptureToken),
+               "App Switcher capture invalidates released validation before activation")
+
+        var queuedSourceRoute = SwitcherRouteOwnership()
+        queuedSourceRoute.setTapLive(true)
+        guard case let .accepted(sourceSessionToken) = queuedSourceRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before source handoff")
+            return
+        }
+        _ = queuedSourceRoute.claim(sourceSessionToken)
+        _ = queuedSourceRoute.beginSession(sourceSessionToken)
+        _ = queuedSourceRoute.releaseActiveSession(for: [])
+        guard case let .accepted(beforePublicationToken) = queuedSourceRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher queues a gesture before target publication")
+            return
+        }
+        expect(queuedSourceRoute.claim(beforePublicationToken) == nil,
+               "App Switcher waits for a release target before claiming its queued source")
+        expect(queuedSourceRoute.claimReleasedSession(sourceSessionToken)
+               && queuedSourceRoute.publishActivationSource(activationSource,
+                                                            generation: sourceSessionToken)
+               && queuedSourceRoute.claim(beforePublicationToken)?.source == activationSource,
+               "App Switcher binds a pre-publication gesture to the activated target")
+
+        var publishedSourceRoute = SwitcherRouteOwnership()
+        publishedSourceRoute.setTapLive(true)
+        guard case let .accepted(publishedSessionToken) = publishedSourceRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before published source handoff")
+            return
+        }
+        _ = publishedSourceRoute.claim(publishedSessionToken)
+        _ = publishedSourceRoute.beginSession(publishedSessionToken)
+        _ = publishedSourceRoute.releaseActiveSession(for: [])
+        _ = publishedSourceRoute.claimReleasedSession(publishedSessionToken)
+        _ = publishedSourceRoute.publishActivationSource(activationSource,
+                                                         generation: publishedSessionToken)
+        guard case let .accepted(afterPublicationToken) = publishedSourceRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher queues a gesture while activation is in flight")
+            return
+        }
+        expect(publishedSourceRoute.claim(afterPublicationToken)?.source == activationSource,
+               "App Switcher binds a post-publication gesture while focus confirmation is delayed")
+        publishedSourceRoute.finishActivation(publishedSessionToken)
+        publishedSourceRoute.invalidatePendingRoute(token: afterPublicationToken)
+        guard case let .accepted(afterConfirmationToken) = publishedSourceRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher accepts a later gesture after activation confirmation")
+            return
+        }
+        expect(publishedSourceRoute.claim(afterConfirmationToken)?.source == nil,
+               "App Switcher does not leak a confirmed activation source into later gestures")
+
+        let replacementTarget = SwitcherItem.window(id: 902,
+                                                    title: "Replacement",
+                                                    appName: "Replacement App",
+                                                    pid: 910,
+                                                    isOnScreen: true,
+                                                    frame: CGRect(x: 20, y: 20,
+                                                                  width: 900, height: 700))
+        let replacementSource = SwitcherRouteSource(replacementTarget)
+        var chainedSourceRoute = SwitcherRouteOwnership()
+        chainedSourceRoute.setTapLive(true)
+        guard case let .accepted(chainedSessionToken) = chainedSourceRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns the first route in a source chain")
+            return
+        }
+        _ = chainedSourceRoute.claim(chainedSessionToken)
+        _ = chainedSourceRoute.beginSession(chainedSessionToken)
+        _ = chainedSourceRoute.releaseActiveSession(for: [])
+        _ = chainedSourceRoute.claimReleasedSession(chainedSessionToken)
+        _ = chainedSourceRoute.publishActivationSource(activationSource,
+                                                       generation: chainedSessionToken)
+        guard case let .accepted(chainedFirstGesture) = chainedSourceRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher queues the first gesture in a source chain")
+            return
+        }
+        _ = chainedSourceRoute.observePendingModifierFlags([])
+        guard case let .accepted(chainedSecondGesture) = chainedSourceRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher queues the second gesture in a source chain")
+            return
+        }
+        _ = chainedSourceRoute.claim(chainedFirstGesture)
+        _ = chainedSourceRoute.beginSession(chainedFirstGesture)
+        _ = chainedSourceRoute.claimReleasedSession(chainedFirstGesture)
+        _ = chainedSourceRoute.publishActivationSource(replacementSource,
+                                                       generation: chainedFirstGesture)
+        expect(chainedSourceRoute.claim(chainedSecondGesture)?.source == replacementSource,
+               "App Switcher rebinds already queued gestures to the newest activation target")
+
+        var guardedHandoff = SwitcherRouteOwnership()
+        guardedHandoff.setTapLive(true)
+        guard case let .accepted(guardedSessionToken) = guardedHandoff.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before guarded active-event handoff")
+            return
+        }
+        _ = guardedHandoff.claim(guardedSessionToken)
+        _ = guardedHandoff.beginSession(guardedSessionToken)
+        _ = guardedHandoff.releaseActiveSession(for: [])
+        _ = guardedHandoff.claimReleasedSession(guardedSessionToken)
+        _ = guardedHandoff.publishActivationSource(activationSource,
+                                                  generation: guardedSessionToken)
+        expect(guardedHandoff.claimHandoff(expectedAppsRoute,
+                                           expectedSessionToken: guardedSessionToken) != nil,
+               "App Switcher permits one handoff after the observed session ends normally")
+        var captureHandoff = SwitcherRouteOwnership()
+        captureHandoff.setTapLive(true)
+        guard case let .accepted(captureSessionToken) = captureHandoff.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before capture wins a handoff race")
+            return
+        }
+        _ = captureHandoff.claim(captureSessionToken)
+        _ = captureHandoff.beginSession(captureSessionToken)
+        captureHandoff.setCapturing(true)
+        expect(captureHandoff.claimHandoff(expectedAppsRoute,
+                                           expectedSessionToken: captureSessionToken) == nil,
+               "App Switcher rejects a delayed active event after capture invalidation")
+        var teardownHandoff = SwitcherRouteOwnership()
+        teardownHandoff.setTapLive(true)
+        guard case let .accepted(teardownSessionToken) = teardownHandoff.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before teardown wins a handoff race")
+            return
+        }
+        _ = teardownHandoff.claim(teardownSessionToken)
+        _ = teardownHandoff.beginSession(teardownSessionToken)
+        teardownHandoff.setTapLive(false)
+        expect(teardownHandoff.claimHandoff(expectedAppsRoute,
+                                            expectedSessionToken: teardownSessionToken) == nil,
+               "App Switcher rejects a delayed active event after tap teardown")
+
+        var cacheRefresh = SwitcherCacheRefreshOwnership()
+        cacheRefresh.setEnabled(true)
+        let switcherFirstRefresh = cacheRefresh.schedule(sessionActive: false)
+        expect(switcherFirstRefresh != nil
+               && cacheRefresh.beginWorker(switcherFirstRefresh!, sessionActive: false),
+               "App Switcher starts a scheduled cache worker without main-thread enumeration")
+        cacheRefresh.invalidate()
+        expect(!cacheRefresh.completeWorker(switcherFirstRefresh!),
+               "App Switcher discards a cache worker that a shortcut superseded")
+        let switcherSecondRefresh = cacheRefresh.schedule(sessionActive: false)
+        expect(switcherSecondRefresh != nil && switcherSecondRefresh! > switcherFirstRefresh!
+               && cacheRefresh.beginWorker(switcherSecondRefresh!, sessionActive: false)
+               && cacheRefresh.completeWorker(switcherSecondRefresh!),
+               "App Switcher stores only the newest cache refresh generation")
+        cacheRefresh.setEnabled(false)
+        expect(cacheRefresh.schedule(sessionActive: false) == nil,
+               "App Switcher teardown prevents cache refresh scheduling")
 
         expect(SwitcherSupport.cacheDisposition(fingerprintMatches: true,
                                                 storedAt: 99,

@@ -52,6 +52,27 @@ enum SwitcherMatchedRouteDecision: Equatable {
     case rejected
 }
 
+struct SwitcherRouteSource: Equatable {
+    let itemID: String
+    let pid: pid_t
+    let windowID: CGWindowID?
+    let windowOwnerPID: pid_t?
+    let isFullscreen: Bool
+
+    init(_ item: SwitcherItem) {
+        itemID = item.id
+        pid = item.pid
+        windowID = item.windowID
+        windowOwnerPID = item.windowOwnerPID
+        isFullscreen = item.isFullscreen
+    }
+}
+
+struct SwitcherRouteClaim: Equatable {
+    let route: SwitcherInitialRoute
+    let source: SwitcherRouteSource?
+}
+
 /// Owns the shortcut between the tap swallowing it and the main thread
 /// establishing a session. Navigation remains on the tap thread while a cold
 /// Accessibility walk is in progress; modifier release queues the next
@@ -63,6 +84,7 @@ struct SwitcherRouteOwnership {
     private struct Pending {
         let token: UInt64
         let route: SwitcherInitialRoute
+        var sourceGeneration: UInt64?
         var navigation: [SwitcherPendingNavigation] = []
         var claimed = false
         var gestureEnded = false
@@ -73,28 +95,38 @@ struct SwitcherRouteOwnership {
         let shortcut: GlobalShortcut
     }
 
+    private struct Released {
+        let token: UInt64
+        var claimed = false
+    }
+
+    private struct Activation {
+        let generation: UInt64
+        let source: SwitcherRouteSource
+    }
+
     private var generation: UInt64 = 0
     private var pending: [Pending] = []
     private var active: Active?
+    private var released: Released?
+    private var activation: Activation?
 
     var hasPendingRoute: Bool { !pending.isEmpty }
     var sessionActive: Bool { active != nil }
+    var hasSessionLifecycle: Bool { active != nil || released != nil }
+    var activeToken: UInt64? { active?.token }
     var routingShortcut: GlobalShortcut? {
         active?.shortcut ?? pending.last(where: { !$0.gestureEnded })?.route.shortcut
     }
 
     mutating func setTapLive(_ live: Bool) {
         tapLive = live
-        if !live { invalidatePendingRoute() }
+        if !live { invalidateLifecycle() }
     }
 
     mutating func setCapturing(_ value: Bool) {
         capturing = value
-        if value { invalidatePendingRoute() }
-    }
-
-    mutating func endSession() {
-        active = nil
+        if value { invalidateLifecycle() }
     }
 
     mutating func accept(_ route: SwitcherInitialRoute,
@@ -121,7 +153,9 @@ struct SwitcherRouteOwnership {
             return .coalesced
         }
         generation &+= 1
-        pending.append(Pending(token: generation, route: route))
+        pending.append(Pending(token: generation,
+                               route: route,
+                               sourceGeneration: released?.token ?? activation?.generation))
         return .accepted(generation)
     }
 
@@ -152,12 +186,19 @@ struct SwitcherRouteOwnership {
         return true
     }
 
-    mutating func claim(_ token: UInt64) -> SwitcherInitialRoute? {
+    mutating func claim(_ token: UInt64) -> SwitcherRouteClaim? {
         guard tapLive, !capturing, !sessionActive,
               pending.first?.token == token, !pending[0].claimed
         else { return nil }
+        let source: SwitcherRouteSource?
+        if let sourceGeneration = pending[0].sourceGeneration {
+            guard activation?.generation == sourceGeneration else { return nil }
+            source = activation?.source
+        } else {
+            source = nil
+        }
         pending[0].claimed = true
-        return pending[0].route
+        return SwitcherRouteClaim(route: pending[0].route, source: source)
     }
 
     /// Atomically hands routing to the new session after its first selection
@@ -172,24 +213,91 @@ struct SwitcherRouteOwnership {
         let accepted = pending.removeFirst()
         if !accepted.gestureEnded {
             active = Active(token: accepted.token, shortcut: accepted.route.shortcut)
+        } else {
+            released = Released(token: accepted.token)
         }
         return (accepted.route, accepted.navigation, accepted.gestureEnded, accepted.token)
     }
 
-    mutating func beginSession(shortcut: GlobalShortcut) -> UInt64 {
-        generation &+= 1
-        active = Active(token: generation, shortcut: shortcut)
-        return generation
-    }
-
-    /// Relinquishes routing before main validates or activates the selected
-    /// window. A following gesture can then be consumed while AX is busy.
+    /// Moves the route into a validation phase that remains lifecycle-owned.
+    /// New gestures can queue behind it, but teardown and shortcut capture can
+    /// still invalidate the exact release before it activates anything.
     mutating func releaseActiveSession(for flags: CGEventFlags) -> UInt64? {
         guard let active,
               !active.shortcut.requiredModifiersHeld(in: flags)
         else { return nil }
         self.active = nil
+        released = Released(token: active.token)
         return active.token
+    }
+
+    mutating func releaseActiveSession() -> UInt64? {
+        guard let active else { return nil }
+        self.active = nil
+        released = Released(token: active.token)
+        return active.token
+    }
+
+    mutating func claimReleasedSession(_ token: UInt64) -> Bool {
+        guard tapLive, !capturing, released?.token == token,
+              released?.claimed == false else { return false }
+        released?.claimed = true
+        return true
+    }
+
+    mutating func publishActivationSource(_ source: SwitcherRouteSource,
+                                          generation token: UInt64) -> Bool {
+        guard tapLive, !capturing, released?.token == token,
+              released?.claimed == true else { return false }
+        released = nil
+        activation = Activation(generation: token, source: source)
+        for index in pending.indices {
+            pending[index].sourceGeneration = token
+        }
+        return true
+    }
+
+    mutating func completeReleasedSession(_ token: UInt64) {
+        guard released?.token == token else { return }
+        released = nil
+        for index in pending.indices where pending[index].sourceGeneration == token {
+            pending[index].sourceGeneration = nil
+        }
+    }
+
+    mutating func finishActivation(_ token: UInt64) {
+        guard activation?.generation == token else { return }
+        activation = nil
+        for index in pending.indices where pending[index].sourceGeneration == token {
+            pending[index].sourceGeneration = nil
+        }
+    }
+
+    mutating func confirmActivation(pid: pid_t) {
+        guard let activation, activation.source.pid == pid else { return }
+        finishActivation(activation.generation)
+    }
+
+    /// Claims an active-event handoff only if the session observed by the tap
+    /// ended normally. Capture, teardown, and replacement sessions invalidate
+    /// the expected token, so a delayed event passes through instead.
+    mutating func claimHandoff(_ route: SwitcherInitialRoute,
+                               expectedSessionToken: UInt64) -> (token: UInt64,
+                                                                 claim: SwitcherRouteClaim)? {
+        guard tapLive, !capturing, !sessionActive,
+              activation?.generation == expectedSessionToken
+        else { return nil }
+        guard case let .accepted(token) = accept(route),
+              let claim = claim(token) else { return nil }
+        return (token, claim)
+    }
+
+    mutating func invalidateLifecycle() {
+        pending = []
+        active = nil
+        released = nil
+        activation = nil
+        generation &+= 1
     }
 
     mutating func invalidatePendingRoute() {
@@ -209,6 +317,47 @@ enum SwitcherCacheDisposition: Equatable {
     case reuse
     case reuseAndRefresh
     case rebuild
+}
+
+/// Generation ownership for the asynchronous cache warmer. Scheduling and
+/// snapshot capture happen on main, the worker holds only the token, and a
+/// late completion can store results only while that exact generation lives.
+struct SwitcherCacheRefreshOwnership {
+    private(set) var enabled = false
+    private var generation: UInt64 = 0
+    private var scheduledToken: UInt64?
+    private var workerToken: UInt64?
+
+    mutating func setEnabled(_ value: Bool) {
+        enabled = value
+        invalidate()
+    }
+
+    mutating func schedule(sessionActive: Bool) -> UInt64? {
+        guard enabled, !sessionActive, scheduledToken == nil, workerToken == nil else { return nil }
+        generation &+= 1
+        scheduledToken = generation
+        return generation
+    }
+
+    mutating func beginWorker(_ token: UInt64, sessionActive: Bool) -> Bool {
+        guard enabled, !sessionActive, scheduledToken == token else { return false }
+        scheduledToken = nil
+        workerToken = token
+        return true
+    }
+
+    mutating func completeWorker(_ token: UInt64) -> Bool {
+        guard enabled, workerToken == token, generation == token else { return false }
+        workerToken = nil
+        return true
+    }
+
+    mutating func invalidate() {
+        generation &+= 1
+        scheduledToken = nil
+        workerToken = nil
+    }
 }
 
 /// The cheap state that proves a warmed window list still describes the
