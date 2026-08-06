@@ -1730,6 +1730,19 @@ struct MetricsTests {
                                                  focusedWindowID: nil,
                                                  items: [embeddedWindow]) == nil,
                "App Switcher reports no foreground window when the app in front owns none")
+        expect(!SwitcherSupport.needsFocusedWindowLookup(frontmostPID: 101,
+                                                         items: [embeddedWindow, offscreenWindow]),
+               "App Switcher skips focused-window AX lookup when the source is unambiguous")
+        let secondVisibleWindow = SwitcherItem.window(id: 79,
+                                                      title: "Second",
+                                                      appName: "Primary",
+                                                      pid: 101,
+                                                      isOnScreen: true,
+                                                      frame: CGRect(x: 40, y: 40,
+                                                                    width: 800, height: 500))
+        expect(SwitcherSupport.needsFocusedWindowLookup(frontmostPID: 101,
+                                                        items: [embeddedWindow, secondVisibleWindow]),
+               "App Switcher resolves the focused window when visible sources are ambiguous")
         expect(SwitcherSupport.initialSelectionPosition(pids: [101, 202, 303],
                                                         hasForegroundEntry: true,
                                                         frontmostPID: 101,
