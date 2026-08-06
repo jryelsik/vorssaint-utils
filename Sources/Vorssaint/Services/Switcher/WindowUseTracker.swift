@@ -36,6 +36,7 @@ final class WindowUseTracker {
     private let stateLock = NSLock()
     private var windowHistory: [CGWindowID] = []
     private var appHistory: [pid_t] = []
+    private var windowChangeHandler: (() -> Void)?
     /// False from the moment the feature is switched off. The watcher thread is
     /// stopped from the outside and never joined, so without this a callback
     /// already in flight could write a window back into a history that was
@@ -102,10 +103,18 @@ final class WindowUseTracker {
     }
 
     private func promote(window windowID: CGWindowID) {
-        stateLock.withLock {
-            guard recording else { return }
+        let handler = stateLock.withLock { () -> (() -> Void)? in
+            guard recording else { return nil }
             windowHistory = WindowUseOrder.promoting(windowID, in: windowHistory)
+            return windowChangeHandler
         }
+        handler?()
+    }
+
+    /// Lets the switcher warm a new AX-derived list when the foreground app
+    /// changes windows without an application lifecycle notification.
+    func setWindowChangeHandler(_ handler: (() -> Void)?) {
+        stateLock.withLock { windowChangeHandler = handler }
     }
 
     private func promote(app pid: pid_t) {
@@ -296,7 +305,9 @@ final class WindowUseTracker {
         // full default timeout, on this thread, once per switch.
         AXUIElementSetMessagingTimeout(application, Self.messagingTimeout)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
-        for notification in [kAXFocusedWindowChangedNotification, kAXMainWindowChangedNotification] {
+        for notification in [kAXFocusedWindowChangedNotification,
+                             kAXMainWindowChangedNotification,
+                             kAXWindowCreatedNotification] {
             _ = AXObserverAddNotification(created, application, notification as CFString, refcon)
         }
         CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(created), .defaultMode)
@@ -315,7 +326,9 @@ final class WindowUseTracker {
         if let observedPID {
             let application = AXUIElementCreateApplication(observedPID)
             AXUIElementSetMessagingTimeout(application, Self.messagingTimeout)
-            for notification in [kAXFocusedWindowChangedNotification, kAXMainWindowChangedNotification] {
+            for notification in [kAXFocusedWindowChangedNotification,
+                                 kAXMainWindowChangedNotification,
+                                 kAXWindowCreatedNotification] {
                 _ = AXObserverRemoveNotification(observer, application, notification as CFString)
             }
         }

@@ -23,6 +23,15 @@ struct SwitcherSearchRecord: Equatable {
     let appName: String
 }
 
+/// The exact shortcut decision made while the event tap still owns the key.
+/// Main-thread handling carries this value instead of consulting mutable
+/// preferences after the original event has already been swallowed.
+struct SwitcherInitialRoute: Equatable {
+    let shortcut: GlobalShortcut
+    let scope: SwitcherSessionScope
+    let reversed: Bool
+}
+
 /// The cheap state that proves a warmed window list still describes the
 /// current desktop and the preferences that shaped it.
 struct SwitcherWindowFingerprint: Equatable {
@@ -264,6 +273,64 @@ struct SwitcherShortcutHints: Equatable {
 }
 
 enum SwitcherSupport {
+    static func initialRoute(appsShortcut: GlobalShortcut,
+                             windowShortcut: GlobalShortcut,
+                             matchesApps: Bool,
+                             matchesWindows: Bool,
+                             windowPositionalMatch: Bool,
+                             shiftHeld: Bool) -> SwitcherInitialRoute? {
+        if matchesApps {
+            return SwitcherInitialRoute(
+                shortcut: appsShortcut,
+                scope: .allApps,
+                reversed: appsShortcut.shiftIsNavigationModifier && shiftHeld
+            )
+        }
+        guard matchesWindows else { return nil }
+        let reversed = windowNavigationDelta(
+            positionalMatch: windowPositionalMatch,
+            shiftIsNavigationModifier: windowShortcut.shiftIsNavigationModifier,
+            shiftHeld: shiftHeld
+        ) < 0
+        return SwitcherInitialRoute(shortcut: windowShortcut,
+                                    scope: .frontmostApp,
+                                    reversed: reversed)
+    }
+
+    /// Refresh retries are deliberately finite. A moving or retitling window
+    /// can keep two consecutive fingerprints different indefinitely, and a
+    /// warmer must yield instead of monopolizing the main queue.
+    static func cacheRefreshRetryDelay(stable: Bool,
+                                       retryCount: Int,
+                                       sessionActive: Bool,
+                                       maximumRetries: Int = 2) -> TimeInterval? {
+        guard !stable, !sessionActive, retryCount < maximumRetries else { return nil }
+        return 0.2 * Double(retryCount + 1)
+    }
+
+    /// Resolves only a bounded number of release candidates. The first stale
+    /// item can disappear between warming and release, but validating the
+    /// whole desktop here would put the expensive Accessibility walk back on
+    /// the shortcut path.
+    static func liveCommitTarget(items: [SwitcherItem],
+                                 selectedIndex: Int,
+                                 closingItemIDs: Set<String>,
+                                 maximumChecks: Int = 2,
+                                 resolve: (SwitcherItem) -> SwitcherItem?) -> SwitcherItem? {
+        guard maximumChecks > 0,
+              let firstID = commitTargetID(itemIDs: items.map(\.id),
+                                           selectedIndex: selectedIndex,
+                                           closingItemIDs: closingItemIDs),
+              let firstIndex = items.firstIndex(where: { $0.id == firstID })
+        else { return nil }
+        let candidates = Array(items[firstIndex...]) + Array(items[..<firstIndex])
+        return candidates.lazy
+            .filter { !closingItemIDs.contains($0.id) }
+            .prefix(maximumChecks)
+            .compactMap(resolve)
+            .first
+    }
+
     /// Grid resolution used to classify window captures.
     static let captureAlphaGridSize = 8
 

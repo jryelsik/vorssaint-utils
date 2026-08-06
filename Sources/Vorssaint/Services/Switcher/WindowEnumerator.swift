@@ -133,6 +133,19 @@ enum WindowEnumerator {
                     currentSpaceOnly: false)
     }
 
+    /// Re-reads just the app that owns a release candidate. This AX-aware
+    /// check catches closed, minimized, restored, fullscreen and AX-only
+    /// windows without making the consumed shortcut enumerate every app.
+    static func refreshedCandidate(_ item: SwitcherItem) -> SwitcherItem? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard item.windowID != nil else {
+            guard let app = NSRunningApplication(processIdentifier: item.pid), !app.isTerminated
+            else { return nil }
+            return item
+        }
+        return listWindows(for: item.pid, maximumCount: 64).first { $0.id == item.id }
+    }
+
     private static func listWindows(filterPID: pid_t?,
                                     maximumCount: Int,
                                     windowlessApps: SwitcherWindowlessApps,

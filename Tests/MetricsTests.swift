@@ -1781,6 +1781,59 @@ struct MetricsTests {
                "App Switcher invalidates its cache when a window moves between desktops")
         expect(stableWindowFingerprint != windowFingerprint(mergeTabs: true),
                "App Switcher invalidates its cache when grouping preferences change")
+        let acceptedAppsRoute = SwitcherSupport.initialRoute(
+            appsShortcut: .switcherDefault,
+            windowShortcut: .switcherWindowDefault,
+            matchesApps: true,
+            matchesWindows: false,
+            windowPositionalMatch: false,
+            shiftHeld: false
+        )
+        expect(acceptedAppsRoute == SwitcherInitialRoute(shortcut: .switcherDefault,
+                                                         scope: .allApps,
+                                                         reversed: false),
+               "App Switcher carries the accepted shortcut decision unchanged to main")
+        expect(SwitcherSupport.cacheRefreshRetryDelay(stable: false,
+                                                      retryCount: 0,
+                                                      sessionActive: false) == 0.2
+               && SwitcherSupport.cacheRefreshRetryDelay(stable: false,
+                                                         retryCount: 1,
+                                                         sessionActive: false) == 0.4
+               && SwitcherSupport.cacheRefreshRetryDelay(stable: false,
+                                                         retryCount: 2,
+                                                         sessionActive: false) == nil,
+               "App Switcher bounds and spaces unstable cache refresh retries")
+        expect(SwitcherSupport.cacheRefreshRetryDelay(stable: false,
+                                                      retryCount: 0,
+                                                      sessionActive: true) == nil,
+               "App Switcher never warms the window cache during a session")
+        let staleCandidate = SwitcherItem.window(id: 90,
+                                                 title: "Closed",
+                                                 appName: "Primary",
+                                                 pid: 101,
+                                                 isOnScreen: true,
+                                                 frame: CGRect(x: 20, y: 20, width: 900, height: 600))
+        let cachedCandidate = SwitcherItem.window(id: 91,
+                                                  title: "Restored",
+                                                  appName: "Secondary",
+                                                  pid: 202,
+                                                  isOnScreen: false,
+                                                  isMinimized: true,
+                                                  frame: CGRect(x: 40, y: 40, width: 800, height: 500))
+        let refreshedCandidate = cachedCandidate.withMinimized(false)
+        var validatedIDs: [String] = []
+        let liveCandidate = SwitcherSupport.liveCommitTarget(
+            items: [staleCandidate, cachedCandidate, offscreenWindow],
+            selectedIndex: 0,
+            closingItemIDs: [],
+            maximumChecks: 2
+        ) { item in
+            validatedIDs.append(item.id)
+            return item.id == cachedCandidate.id ? refreshedCandidate : nil
+        }
+        expect(validatedIDs == [staleCandidate.id, cachedCandidate.id]
+               && liveCandidate == refreshedCandidate,
+               "App Switcher validates only bounded candidates and uses current AX state")
         expect(SwitcherSupport.initialSelectionPosition(pids: [101, 202, 303],
                                                         hasForegroundEntry: true,
                                                         frontmostPID: 101,

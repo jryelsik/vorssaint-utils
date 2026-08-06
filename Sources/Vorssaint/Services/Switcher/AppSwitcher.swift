@@ -91,6 +91,7 @@ final class AppSwitcher: ObservableObject {
     private var cachedWindowFingerprint: SwitcherWindowFingerprint?
     private var windowCacheEnabled = false
     private var pendingCacheRefresh: DispatchWorkItem?
+    private var cacheRefreshRetryCount = 0
     private var workspaceTokens: [NSObjectProtocol] = []
 
     /// The panel appears only after this delay, like the system switcher: a
@@ -388,13 +389,22 @@ final class AppSwitcher: ObservableObject {
         // straight through so the user can record this feature's own
         // combination instead of opening the switcher with it.
         if capturing { return Unmanaged.passUnretained(event) }
+        var initialRoute: SwitcherInitialRoute?
         if !active {
             guard type == .keyDown else { return Unmanaged.passUnretained(event) }
             let matchesApps = shortcut.matches(event: event, allowingExtraShift: true)
+            let windowPositionalMatch = windowShortcut.matches(event: event, allowingExtraShift: true)
             let matchesWindows = !matchesApps
-                && (windowShortcut.matches(event: event, allowingExtraShift: true)
-                    || windowShortcut.matchesByCharacter(event: event))
-            guard matchesApps || matchesWindows else { return Unmanaged.passUnretained(event) }
+                && (windowPositionalMatch || windowShortcut.matchesByCharacter(event: event))
+            initialRoute = SwitcherSupport.initialRoute(
+                appsShortcut: shortcut,
+                windowShortcut: windowShortcut,
+                matchesApps: matchesApps,
+                matchesWindows: matchesWindows,
+                windowPositionalMatch: windowPositionalMatch,
+                shiftHeld: event.flags.contains(.maskShift)
+            )
+            guard initialRoute != nil else { return Unmanaged.passUnretained(event) }
             // Live check at the one point that starts AX work: with the grant
             // revoked, the session lookups would hang and freeze input. The
             // TCC round-trip is an IPC, so it runs once per shortcut press,
@@ -408,9 +418,9 @@ final class AppSwitcher: ObservableObject {
             // miss can start Accessibility work on the main thread.
             let tapAlive = lifecycleLock.withLock { tap != nil && !shouldStopTapThread }
             guard tapAlive else { return Unmanaged.passUnretained(event) }
-            guard let copiedEvent = event.copy() else { return nil }
+            guard let initialRoute else { return Unmanaged.passUnretained(event) }
             DispatchQueue.main.async { [weak self] in
-                _ = self?.handle(type: type, event: copiedEvent)
+                self?.handleAcceptedInitialRoute(initialRoute)
             }
             return nil
         }
@@ -452,6 +462,15 @@ final class AppSwitcher: ObservableObject {
         default:
             return Unmanaged.passUnretained(event)
         }
+    }
+
+    /// Honors the immutable routing decision made before the event tap
+    /// swallowed the press. Preferences and lifecycle may change while this
+    /// block waits for main, but rejecting it then cannot give the key back.
+    private func handleAcceptedInitialRoute(_ route: SwitcherInitialRoute) {
+        beginSession(reversed: route.reversed,
+                     shortcut: route.shortcut,
+                     scope: route.scope)
     }
 
     private func handleKeyDown(_ event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -609,21 +628,24 @@ final class AppSwitcher: ObservableObject {
         let allWindows: [SwitcherItem]
         if cachedWindowFingerprint == fingerprint {
             allWindows = cachedWindowItems
+        } else if !cachedWindowItems.isEmpty {
+            // WindowServer changes are common between presses. Reuse the
+            // warmed ordering now and refresh after the consumed shortcut has
+            // opened; release validates only the candidate it will activate.
+            allWindows = cachedWindowItems
+            cachedWindowFingerprint = nil
+            scheduleWindowCacheRefresh()
         } else {
-            var refreshed = WindowEnumerator.listWindows()
-            var refreshedFingerprint = WindowEnumerator.switcherFingerprint()
-            var isStable = fingerprint == refreshedFingerprint
-            if !isStable {
-                let retryFingerprint = refreshedFingerprint
-                refreshed = WindowEnumerator.listWindows()
-                refreshedFingerprint = WindowEnumerator.switcherFingerprint()
-                isStable = retryFingerprint == refreshedFingerprint
-            }
+            let refreshed = WindowEnumerator.listWindows()
+            let refreshedFingerprint = WindowEnumerator.switcherFingerprint()
+            let isStable = fingerprint == refreshedFingerprint
             allWindows = refreshed
             if isStable {
                 storeCachedWindows(refreshed, fingerprint: refreshedFingerprint)
             } else {
-                invalidateWindowCache()
+                cachedWindowItems = refreshed
+                cachedWindowFingerprint = nil
+                scheduleWindowCacheRefresh()
             }
         }
         let windows: [SwitcherItem]
@@ -720,7 +742,16 @@ final class AppSwitcher: ObservableObject {
     /// window and Space changes that have no workspace notification.
     private func startWindowCache() {
         windowCacheEnabled = true
+        cacheRefreshRetryCount = 0
         invalidateWindowCache()
+        WindowUseTracker.shared.setWindowChangeHandler { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.windowCacheEnabled else { return }
+                self.cachedWindowFingerprint = nil
+                self.cacheRefreshRetryCount = 0
+                self.scheduleWindowCacheRefresh(after: 0.12)
+            }
+        }
         if workspaceTokens.isEmpty {
             let center = NSWorkspace.shared.notificationCenter
             let names: [Notification.Name] = [
@@ -730,7 +761,8 @@ final class AppSwitcher: ObservableObject {
             ]
             workspaceTokens = names.map { name in
                 center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                    self?.invalidateWindowCache()
+                    self?.cachedWindowFingerprint = nil
+                    self?.cacheRefreshRetryCount = 0
                     self?.scheduleWindowCacheRefresh()
                 }
             }
@@ -739,34 +771,47 @@ final class AppSwitcher: ObservableObject {
     }
 
     private func stopWindowCache() {
+        WindowUseTracker.shared.setWindowChangeHandler(nil)
         let center = NSWorkspace.shared.notificationCenter
         for token in workspaceTokens { center.removeObserver(token) }
         workspaceTokens = []
         windowCacheEnabled = false
         pendingCacheRefresh?.cancel()
         pendingCacheRefresh = nil
+        cacheRefreshRetryCount = 0
         invalidateWindowCache()
     }
 
-    private func scheduleWindowCacheRefresh() {
-        guard windowCacheEnabled, pendingCacheRefresh == nil else { return }
+    private func scheduleWindowCacheRefresh(after delay: TimeInterval = 0) {
+        guard windowCacheEnabled, !sessionActive, pendingCacheRefresh == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingCacheRefresh = nil
             guard self.windowCacheEnabled else { return }
+            guard !self.sessionActive else { return }
             let before = WindowEnumerator.switcherFingerprint()
             let items = WindowEnumerator.listWindows()
             let after = WindowEnumerator.switcherFingerprint()
             guard self.windowCacheEnabled else { return }
             if before == after {
                 self.storeCachedWindows(items, fingerprint: after)
+                self.cacheRefreshRetryCount = 0
             } else {
-                self.invalidateWindowCache()
-                self.scheduleWindowCacheRefresh()
+                self.cachedWindowItems = items
+                self.cachedWindowFingerprint = nil
+                let retry = self.cacheRefreshRetryCount
+                self.cacheRefreshRetryCount += 1
+                if let delay = SwitcherSupport.cacheRefreshRetryDelay(
+                    stable: false,
+                    retryCount: retry,
+                    sessionActive: self.sessionActive
+                ) {
+                    self.scheduleWindowCacheRefresh(after: delay)
+                }
             }
         }
         pendingCacheRefresh = work
-        DispatchQueue.main.async(execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func invalidateWindowCache() {
@@ -1091,10 +1136,10 @@ final class AppSwitcher: ObservableObject {
         guard sessionActive else { return }
         // A window that was just closed is still listed for a moment; letting
         // go right after must land on what takes its place, never on it.
-        let selection = SwitcherSupport.commitTargetID(itemIDs: windows.map(\.id),
-                                                       selectedIndex: selectedIndex,
-                                                       closingItemIDs: closingItemIDs)
-            .flatMap { id in windows.first { $0.id == id } }
+        let selection = SwitcherSupport.liveCommitTarget(items: windows,
+                                                         selectedIndex: selectedIndex,
+                                                         closingItemIDs: closingItemIDs,
+                                                         resolve: WindowEnumerator.refreshedCandidate)
         let source = sessionSourceContext
         let previousWindowID = sessionStartWindowID
         endSession()
@@ -1136,6 +1181,9 @@ final class AppSwitcher: ObservableObject {
         sessionScope = .allApps
         shiftBackNavigationHeld = false
         closingItemIDs = []
+        if cachedWindowFingerprint == nil {
+            scheduleWindowCacheRefresh()
+        }
     }
 
     // MARK: - Panel
