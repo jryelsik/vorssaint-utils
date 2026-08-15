@@ -421,7 +421,13 @@ final class AppSwitcher: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
         if pendingFlagsConsumed { return nil }
-        var activeToken = routeLock.withLock { routeOwnership.activeToken }
+        let initialActiveState = routeLock.withLock {
+            (routeOwnership.activeToken, routeOwnership.activeTerminalPending)
+        }
+        if initialActiveState.1, type == .flagsChanged {
+            return Unmanaged.passUnretained(event)
+        }
+        var activeToken = initialActiveState.0
         var routeIsActive = activeToken != nil
         if !routeIsActive {
             guard type == .keyDown else { return Unmanaged.passUnretained(event) }

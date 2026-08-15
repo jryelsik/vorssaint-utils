@@ -145,6 +145,7 @@ struct SwitcherRouteOwnership {
     private struct Active {
         let token: UInt64
         let shortcut: GlobalShortcut
+        let terminal: SwitcherPendingTerminal?
         var searchPinned = false
     }
 
@@ -168,6 +169,7 @@ struct SwitcherRouteOwnership {
     var sessionActive: Bool { active != nil }
     var hasSessionLifecycle: Bool { active != nil || released != nil }
     var activeToken: UInt64? { active?.token }
+    var activeTerminalPending: Bool { active?.terminal != nil }
     var routingShortcut: GlobalShortcut? {
         active?.shortcut ?? pending.last(where: { !$0.gestureEnded })?.route.shortcut
     }
@@ -374,6 +376,7 @@ struct SwitcherRouteOwnership {
         if !accepted.gestureEnded || accepted.terminal != nil {
             active = Active(token: accepted.token,
                             shortcut: accepted.route.shortcut,
+                            terminal: accepted.terminal,
                             searchPinned: accepted.searchPinRequested)
         } else {
             released = Released(token: accepted.token)
@@ -387,6 +390,7 @@ struct SwitcherRouteOwnership {
     /// still invalidate the exact release before it activates anything.
     mutating func releaseActiveSession(for flags: CGEventFlags) -> UInt64? {
         guard let active,
+              active.terminal == nil,
               !active.searchPinned,
               !active.shortcut.requiredModifiersHeld(in: flags)
         else { return nil }

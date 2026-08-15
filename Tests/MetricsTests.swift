@@ -2191,12 +2191,15 @@ struct MetricsTests {
         let begunPendingEnter = pendingEnterBoundary.beginSession(pendingEnterToken)
         expect(begunPendingEnter?.operations == [.searchText("a"), .terminal(.commit)]
                && begunPendingEnter?.gestureEnded == true
-               && pendingEnterBoundary.activeToken == pendingEnterToken,
+               && pendingEnterBoundary.activeToken == pendingEnterToken
+               && pendingEnterBoundary.activeTerminalPending,
                "App Switcher activates the exact pending Enter token for one commit")
-        expect(pendingEnterBoundary.releaseActiveSession(expectedToken: pendingEnterToken)
+        expect(pendingEnterBoundary.releaseActiveSession(for: []) == nil
+               && pendingEnterBoundary.activeToken == pendingEnterToken
+               && pendingEnterBoundary.releaseActiveSession(expectedToken: pendingEnterToken)
                == pendingEnterToken
                && pendingEnterBoundary.releaseActiveSession(expectedToken: pendingEnterToken) == nil,
-               "App Switcher commits pending Enter at most once")
+               "App Switcher ignores modifier release before replaying Enter exactly once")
         pendingEnterBoundary.completeReleasedSession(pendingEnterToken)
         expect(pendingEnterBoundary.claim(afterEnterGestureToken)?.route == expectedAppsRoute,
                "App Switcher preserves the gesture queued after pending Enter")
@@ -2226,10 +2229,13 @@ struct MetricsTests {
         _ = pendingEscapeBoundary.claim(pendingEscapeToken)
         expect(pendingEscapeBoundary.beginSession(pendingEscapeToken)?.operations
                == [.terminal(.cancel)]
+               && pendingEscapeBoundary.activeTerminalPending
+               && pendingEscapeBoundary.releaseActiveSession(for: []) == nil
+               && pendingEscapeBoundary.activeToken == pendingEscapeToken
                && pendingEscapeBoundary.cancelActiveSession(expectedToken: pendingEscapeToken)
                && !pendingEscapeBoundary.cancelActiveSession(expectedToken: pendingEscapeToken)
                && pendingEscapeBoundary.claim(afterEscapeGestureToken)?.route == expectedAppsRoute,
-               "App Switcher cancels only the Escape token and preserves the later gesture")
+               "App Switcher ignores modifier release, cancels Escape, and preserves the later gesture")
 
         var boundedTerminal = SwitcherRouteOwnership()
         boundedTerminal.setTapLive(true)
@@ -2267,6 +2273,11 @@ struct MetricsTests {
                                                       letterAction: nil,
                                                       deletesSearchCharacter: false,
                                                       terminal: .cancel)
+        _ = stalePendingTerminal.claim(stalePendingTerminalToken)
+        _ = stalePendingTerminal.beginSession(stalePendingTerminalToken)
+        expect(stalePendingTerminal.releaseActiveSession(for: []) == nil
+               && stalePendingTerminal.activeToken == stalePendingTerminalToken,
+               "App Switcher holds a terminal token active until exact replay or teardown")
         stalePendingTerminal.invalidateLifecycle()
         stalePendingTerminal.setTapLive(true)
         guard case let .accepted(replacementTerminalToken) = stalePendingTerminal.accept(expectedAppsRoute)
@@ -2276,10 +2287,46 @@ struct MetricsTests {
         }
         _ = stalePendingTerminal.claim(replacementTerminalToken)
         _ = stalePendingTerminal.beginSession(replacementTerminalToken)
-        expect(stalePendingTerminal.beginSession(stalePendingTerminalToken) == nil
-               && !stalePendingTerminal.cancelActiveSession(expectedToken: stalePendingTerminalToken)
-               && stalePendingTerminal.activeToken == replacementTerminalToken,
+        expect(!stalePendingTerminal.cancelActiveSession(expectedToken: stalePendingTerminalToken)
+               && stalePendingTerminal.activeToken == replacementTerminalToken
+               && !stalePendingTerminal.activeTerminalPending,
                "App Switcher stale terminal state cannot affect its replacement token")
+
+        var capturedTerminal = SwitcherRouteOwnership()
+        capturedTerminal.setTapLive(true)
+        guard case let .accepted(capturedTerminalToken) = capturedTerminal.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a terminal route before shortcut capture")
+            return
+        }
+        _ = capturedTerminal.queuePendingKeyInput(pendingEscape,
+                                                  letterAction: nil,
+                                                  deletesSearchCharacter: false,
+                                                  terminal: .cancel)
+        _ = capturedTerminal.claim(capturedTerminalToken)
+        _ = capturedTerminal.beginSession(capturedTerminalToken)
+        capturedTerminal.setCapturing(true)
+        expect(!capturedTerminal.activeTerminalPending
+               && !capturedTerminal.cancelActiveSession(expectedToken: capturedTerminalToken),
+               "App Switcher shortcut capture clears an active pending terminal")
+
+        var tornDownTerminal = SwitcherRouteOwnership()
+        tornDownTerminal.setTapLive(true)
+        guard case let .accepted(tornDownTerminalToken) = tornDownTerminal.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a terminal route before tap teardown")
+            return
+        }
+        _ = tornDownTerminal.queuePendingKeyInput(pendingEnter,
+                                                  letterAction: nil,
+                                                  deletesSearchCharacter: false,
+                                                  terminal: .commit)
+        _ = tornDownTerminal.claim(tornDownTerminalToken)
+        _ = tornDownTerminal.beginSession(tornDownTerminalToken)
+        tornDownTerminal.setTapLive(false)
+        expect(!tornDownTerminal.activeTerminalPending
+               && tornDownTerminal.releaseActiveSession(expectedToken: tornDownTerminalToken) == nil,
+               "App Switcher tap teardown clears an active pending terminal")
 
         let pendingWindowShortcut = SwitcherPendingKeyInput(keyCode: 50,
                                                             text: "`",
