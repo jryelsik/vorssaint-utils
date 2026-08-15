@@ -1586,6 +1586,33 @@ struct MetricsTests {
                "a window-server surface marked to ignore cycling is excluded from the switcher")
         expect(!SpaceHopSupport.isExcludedFromWindowCycle(windowTagsLow: (1 << 19) | (1 << 22)),
                "other window-server tags do not hide a legitimate cross-Space window")
+        var visibleSpaceLoads = 0
+        var windowSpaceLoads: [CGWindowID] = []
+        var excludedTagLoads: [CGWindowID] = []
+        var lazySpaceResolver = SwitcherSpaceResolver(
+            loadVisibleSpaces: {
+                visibleSpaceLoads += 1
+                return [3]
+            },
+            loadWindowSpaces: { windowID in
+                windowSpaceLoads.append(windowID)
+                return [4]
+            },
+            loadExcludedFromCycle: { windowID in
+                excludedTagLoads.append(windowID)
+                return true
+            }
+        )
+        expect(visibleSpaceLoads == 0 && windowSpaceLoads.isEmpty && excludedTagLoads.isEmpty,
+               "App Switcher does not resolve private Space metadata during snapshot capture")
+        expect(lazySpaceResolver.isOnHiddenSpace(41)
+               && lazySpaceResolver.isOnHiddenSpace(41)
+               && visibleSpaceLoads == 1
+               && windowSpaceLoads == [41],
+               "App Switcher lazily resolves and caches Space membership per candidate")
+        expect(lazySpaceResolver.isExcludedFromCycle(41)
+               && excludedTagLoads == [41],
+               "App Switcher resolves window-cycle tags only for candidates that need the veto")
         expect(SpaceHopSupport.arrowSteps(orderedSpacesPerDisplay: [[3, 4, 5]],
                                           visibleSpaces: [3],
                                           target: 5) == 2,
@@ -1888,6 +1915,20 @@ struct MetricsTests {
                    .searchText("a")
                ],
                "App Switcher applies pending pin before its unmodified query")
+        expect(SwitcherSupport.shouldShowPanelAfterStartup(searchPinned: true,
+                                                           gestureEnded: true,
+                                                           requiredModifiersHeld: false),
+               "App Switcher shows a cold pinned search after modifier release")
+        expect(SwitcherSupport.shouldShowPanelAfterStartup(searchPinned: false,
+                                                           gestureEnded: false,
+                                                           requiredModifiersHeld: true)
+               && !SwitcherSupport.shouldShowPanelAfterStartup(searchPinned: false,
+                                                                gestureEnded: true,
+                                                                requiredModifiersHeld: false)
+               && !SwitcherSupport.shouldShowPanelAfterStartup(searchPinned: false,
+                                                                gestureEnded: false,
+                                                                requiredModifiersHeld: false),
+               "App Switcher preserves unpinned held-panel and quick-flick commit behavior")
 
         var orderedPendingPin = SwitcherRouteOwnership()
         orderedPendingPin.setTapLive(true)

@@ -859,7 +859,45 @@ struct SwitcherShortcutHints: Equatable {
     let windows: String
 }
 
+struct SwitcherSpaceResolver {
+    private let loadVisibleSpaces: () -> Set<UInt64>
+    private let loadWindowSpaces: (CGWindowID) -> [UInt64]
+    private let loadExcludedFromCycle: (CGWindowID) -> Bool
+    private var visibleSpaces: Set<UInt64>?
+    private var hiddenSpaceVerdicts: [CGWindowID: Bool] = [:]
+
+    init(loadVisibleSpaces: @escaping () -> Set<UInt64>,
+         loadWindowSpaces: @escaping (CGWindowID) -> [UInt64],
+         loadExcludedFromCycle: @escaping (CGWindowID) -> Bool) {
+        self.loadVisibleSpaces = loadVisibleSpaces
+        self.loadWindowSpaces = loadWindowSpaces
+        self.loadExcludedFromCycle = loadExcludedFromCycle
+    }
+
+    mutating func isOnHiddenSpace(_ windowID: CGWindowID) -> Bool {
+        if let verdict = hiddenSpaceVerdicts[windowID] { return verdict }
+        if visibleSpaces == nil { visibleSpaces = loadVisibleSpaces() }
+        guard let visibleSpaces, !visibleSpaces.isEmpty else { return false }
+        let verdict = SpaceHopSupport.isParkedOnHiddenSpace(
+            windowSpaces: loadWindowSpaces(windowID),
+            visibleSpaces: visibleSpaces
+        )
+        hiddenSpaceVerdicts[windowID] = verdict
+        return verdict
+    }
+
+    func isExcludedFromCycle(_ windowID: CGWindowID) -> Bool {
+        loadExcludedFromCycle(windowID)
+    }
+}
+
 enum SwitcherSupport {
+    static func shouldShowPanelAfterStartup(searchPinned: Bool,
+                                            gestureEnded: Bool,
+                                            requiredModifiersHeld: Bool) -> Bool {
+        searchPinned || (!gestureEnded && requiredModifiersHeld)
+    }
+
     static func cacheDisposition(fingerprintMatches: Bool,
                                  storedAt: TimeInterval?,
                                  now: TimeInterval,

@@ -49,9 +49,6 @@ enum WindowEnumerator {
         let windowHistory: [CGWindowID]
         let appHistory: [pid_t]
         let screenFrames: [CGRect]
-        let visibleSpaces: Set<UInt64>
-        let spacesByWindow: [CGWindowID: [UInt64]]
-        let excludedWindowIDs: Set<CGWindowID>
         let accessibilityGranted: Bool
         let windowlessApps: SwitcherWindowlessApps
         let appRules: [String: SwitcherAppRule]
@@ -59,9 +56,8 @@ enum WindowEnumerator {
         let currentSpaceOnly: Bool
     }
 
-    /// Captures every AppKit, preference, WindowServer and Space input on main.
-    /// The returned value contains only immutable snapshots; its slow
-    /// Accessibility completion is safe to run on the cache worker.
+    /// Captures AppKit, preference, and WindowServer input on main. Slow
+    /// Accessibility and private Space lookups run later on the cache worker.
     static func captureSwitcherSnapshot() -> SwitcherSnapshot {
         dispatchPrecondition(condition: .onQueue(.main))
         let defaults = UserDefaults.standard
@@ -128,11 +124,6 @@ enum WindowEnumerator {
             windowHistory: WindowUseTracker.shared.windows,
             appHistory: WindowUseTracker.shared.apps,
             screenFrames: NSScreen.screens.map(\.frame),
-            visibleSpaces: SpaceWindowBridge.topology()?.visibleSpaces ?? [],
-            spacesByWindow: Dictionary(uniqueKeysWithValues: windowIDs.map {
-                ($0, SpaceWindowBridge.spaces(of: $0))
-            }),
-            excludedWindowIDs: Set(windowIDs.filter(SpaceWindowBridge.isExcludedFromWindowCycle)),
             accessibilityGranted: NSApp == nil
                 ? AXIsProcessTrusted()
                 : Permissions.shared.accessibility,
@@ -368,17 +359,13 @@ enum WindowEnumerator {
         // window belongs to a Space, a stale leftover surface belongs to none.
         // Resolved lazily and cached, so fully Accessibility-confirmed lists
         // pay nothing.
-        let visibleSpaces = snapshot.visibleSpaces
-        var hiddenSpaceVerdicts: [CGWindowID: Bool] = [:]
+        var spaceResolver = SwitcherSpaceResolver(
+            loadVisibleSpaces: { SpaceWindowBridge.topology()?.visibleSpaces ?? [] },
+            loadWindowSpaces: SpaceWindowBridge.spaces,
+            loadExcludedFromCycle: SpaceWindowBridge.isExcludedFromWindowCycle
+        )
         func isOnHiddenSpace(_ windowID: CGWindowID) -> Bool {
-            if let verdict = hiddenSpaceVerdicts[windowID] { return verdict }
-            guard !visibleSpaces.isEmpty else { return false }
-            let verdict = SpaceHopSupport.isParkedOnHiddenSpace(
-                windowSpaces: snapshot.spacesByWindow[windowID] ?? [],
-                visibleSpaces: visibleSpaces
-            )
-            hiddenSpaceVerdicts[windowID] = verdict
-            return verdict
+            spaceResolver.isOnHiddenSpace(windowID)
         }
 
         // No cap during enumeration: the raw window-server order is not
@@ -413,7 +400,7 @@ enum WindowEnumerator {
             let axWindow = accessibilityWindows[windowOwnerPID]?.byID[CGWindowID(windowID)]
             if accessibilityWindows[windowOwnerPID] != nil, axWindow == nil,
                (!isOnHiddenSpace(CGWindowID(windowID))
-                || snapshot.excludedWindowIDs.contains(CGWindowID(windowID))) {
+                || spaceResolver.isExcludedFromCycle(CGWindowID(windowID))) {
                 continue
             }
             let cgFrame = CGRect(x: (boundsDict["X"] as? NSNumber)?.doubleValue ?? 0,

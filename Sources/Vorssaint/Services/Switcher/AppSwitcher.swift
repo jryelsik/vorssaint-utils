@@ -856,10 +856,12 @@ final class AppSwitcher: ObservableObject {
         let list = orderedForSession(windows, currentID: source?.id)
         let pendingOperations: [SwitcherPendingOperation]
         let pendingGestureEnded: Bool
+        let pendingSearchPinned: Bool
         guard let accepted = routeLock.withLock({ routeOwnership.beginSession(pendingRouteToken) })
         else { return false }
         pendingOperations = accepted.operations
         pendingGestureEnded = accepted.gestureEnded
+        pendingSearchPinned = accepted.searchPinned
         sessionGeneration = accepted.token
 
         sessionItems = list
@@ -916,11 +918,15 @@ final class AppSwitcher: ObservableObject {
                 self.previews[windowID] = image
             }
         }
-        // A cache miss is rebuilt after the tap callback returns. If the user
-        // already released the shortcut during that work, preserve quick-flick
-        // behavior by committing immediately without flashing the panel.
-        if !pendingGestureEnded,
-           shortcut.requiredModifiersHeld(in: CGEventSource.flagsState(.combinedSessionState)) {
+        // A cache miss is rebuilt after the tap callback returns. Unpinned
+        // quick flicks commit without flashing; pinned search always stays up.
+        if SwitcherSupport.shouldShowPanelAfterStartup(
+            searchPinned: pendingSearchPinned,
+            gestureEnded: pendingGestureEnded,
+            requiredModifiersHeld: shortcut.requiredModifiersHeld(
+                in: CGEventSource.flagsState(.combinedSessionState)
+            )
+        ) {
             scheduleShowPanel()
         } else {
             if let sessionGeneration {
