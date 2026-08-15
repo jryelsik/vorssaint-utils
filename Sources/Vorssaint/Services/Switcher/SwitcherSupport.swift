@@ -486,11 +486,28 @@ struct SwitcherRouteOwnership {
     }
 
     mutating func confirmAppActivation(pid: pid_t) {
-        guard let activation,
-              activation.source.windowID == nil,
-              activation.source.pid == pid
-        else { return }
+        guard let activation else { return }
+        if activation.source.windowID != nil,
+           activation.source.pid == pid
+            || activation.source.windowOwnerPID == pid {
+            return
+        }
         finishActivation(activation.generation)
+    }
+
+    /// Pending Q can empty either an Active session or one already Released
+    /// by modifier-up. Clear only that exact lifecycle and keep later gestures.
+    mutating func cancelSessionAfterPendingAction(expectedToken token: UInt64) -> Bool {
+        if active?.token == token {
+            active = nil
+            return true
+        }
+        guard released?.token == token else { return false }
+        released = nil
+        for index in pending.indices where pending[index].sourceGeneration == token {
+            pending[index].sourceGeneration = nil
+        }
+        return true
     }
 
     func windowActivationTarget(generation token: UInt64) -> SwitcherActivationWindowTarget? {
@@ -654,6 +671,17 @@ struct SwitcherWindowFingerprint: Equatable {
     let applications: [Application]
     let visibleSpaces: Set<UInt64>
     let preferences: Preferences
+}
+
+enum SwitcherWindowObservationAction: Equatable {
+    case promoteElement
+    case refreshFocusedWindow
+
+    static func action(for notification: String) -> SwitcherWindowObservationAction {
+        notification == "AXWindowCreated"
+            ? .refreshFocusedWindow
+            : .promoteElement
+    }
 }
 
 /// What a letter typed with the panel open does. Anything else goes to search.
@@ -892,6 +920,31 @@ struct SwitcherSpaceResolver {
 }
 
 enum SwitcherSupport {
+    static func resolvingFingerprintSpaces(
+        _ fingerprint: SwitcherWindowFingerprint,
+        spacesOf: (CGWindowID) -> [UInt64],
+        visibleSpaces: () -> Set<UInt64>
+    ) -> SwitcherWindowFingerprint {
+        guard fingerprint.preferences.currentSpaceOnly else { return fingerprint }
+        return SwitcherWindowFingerprint(
+            windows: fingerprint.windows.map { window in
+                SwitcherWindowFingerprint.Window(
+                    id: window.id,
+                    ownerPID: window.ownerPID,
+                    layer: window.layer,
+                    title: window.title,
+                    bounds: window.bounds,
+                    alpha: window.alpha,
+                    isOnScreen: window.isOnScreen,
+                    spaces: spacesOf(window.id).sorted()
+                )
+            },
+            applications: fingerprint.applications,
+            visibleSpaces: visibleSpaces(),
+            preferences: fingerprint.preferences
+        )
+    }
+
     static func shouldShowPanelAfterStartup(searchPinned: Bool,
                                             gestureEnded: Bool,
                                             requiredModifiersHeld: Bool) -> Bool {

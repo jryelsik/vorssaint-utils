@@ -144,9 +144,9 @@ enum WindowEnumerator {
         return listWindows(snapshot: snapshot, filterPID: nil, maximumCount: maximumCount)
     }
 
-    /// Cheap proof that a warmed switcher list still describes the current
-    /// desktop. Unlike full enumeration this asks no app through Accessibility.
-    static func switcherFingerprint() -> SwitcherWindowFingerprint {
+    /// Captures the main-thread-only inputs for cache validation. Private Space
+    /// membership is resolved later on the cache worker.
+    static func captureSwitcherFingerprint() -> SwitcherWindowFingerprint {
         dispatchPrecondition(condition: .onQueue(.main))
         let defaults = UserDefaults.standard
         let currentSpaceOnly = defaults.bool(forKey: DefaultsKey.switcherCurrentSpaceOnly)
@@ -173,12 +173,9 @@ enum WindowEnumerator {
                 bounds: bounds,
                 alpha: (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1,
                 isOnScreen: isOnScreen,
-                spaces: currentSpaceOnly ? SpaceWindowBridge.spaces(of: CGWindowID(id)).sorted() : []
+                spaces: []
             )
         }
-        let visibleSpaces = currentSpaceOnly
-            ? (SpaceWindowBridge.topology()?.visibleSpaces ?? [])
-            : Set<UInt64>()
         let applications = NSWorkspace.shared.runningApplications.map { app in
             SwitcherWindowFingerprint.Application(
                 pid: app.processIdentifier,
@@ -196,13 +193,25 @@ enum WindowEnumerator {
         return SwitcherWindowFingerprint(
             windows: windows,
             applications: applications,
-            visibleSpaces: visibleSpaces,
+            visibleSpaces: [],
             preferences: .init(
                 appRules: appRules,
                 windowlessApps: defaults.string(forKey: DefaultsKey.switcherWindowlessApps),
                 mergeTabs: defaults.bool(forKey: DefaultsKey.switcherMergeTabs),
                 currentSpaceOnly: currentSpaceOnly
             )
+        )
+    }
+
+    /// Completes cache validation away from main. Current Desktop Only must
+    /// include Space membership so moving a window invalidates a warm list.
+    static func resolveSwitcherFingerprint(
+        _ captured: SwitcherWindowFingerprint
+    ) -> SwitcherWindowFingerprint {
+        SwitcherSupport.resolvingFingerprintSpaces(
+            captured,
+            spacesOf: SpaceWindowBridge.spaces,
+            visibleSpaces: { SpaceWindowBridge.topology()?.visibleSpaces ?? [] }
         )
     }
 

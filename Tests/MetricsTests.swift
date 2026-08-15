@@ -1808,6 +1808,57 @@ struct MetricsTests {
                "App Switcher invalidates its cache when a window moves between desktops")
         expect(stableWindowFingerprint != windowFingerprint(mergeTabs: true),
                "App Switcher invalidates its cache when grouping preferences change")
+        var fingerprintSpaceLoads: [CGWindowID] = []
+        var fingerprintVisibleLoads = 0
+        let capturedFingerprint = windowFingerprint(spaces: [])
+        let resolvedFingerprint = SwitcherSupport.resolvingFingerprintSpaces(
+            capturedFingerprint,
+            spacesOf: { windowID in
+                fingerprintSpaceLoads.append(windowID)
+                return [7]
+            },
+            visibleSpaces: {
+                fingerprintVisibleLoads += 1
+                return [7]
+            }
+        )
+        expect(resolvedFingerprint.windows.first?.spaces == [7]
+               && resolvedFingerprint.visibleSpaces == [7]
+               && fingerprintSpaceLoads == [77]
+               && fingerprintVisibleLoads == 1,
+               "App Switcher resolves current-Space fingerprint work through injected worker calls")
+        let allDesktopFingerprint = SwitcherWindowFingerprint(
+            windows: capturedFingerprint.windows,
+            applications: capturedFingerprint.applications,
+            visibleSpaces: [],
+            preferences: .init(appRules: [:],
+                               windowlessApps: SwitcherWindowlessApps.finder.rawValue,
+                               mergeTabs: false,
+                               currentSpaceOnly: false)
+        )
+        fingerprintSpaceLoads = []
+        fingerprintVisibleLoads = 0
+        expect(SwitcherSupport.resolvingFingerprintSpaces(
+            allDesktopFingerprint,
+            spacesOf: { windowID in
+                fingerprintSpaceLoads.append(windowID)
+                return [8]
+            },
+            visibleSpaces: {
+                fingerprintVisibleLoads += 1
+                return [8]
+            }
+        ) == allDesktopFingerprint
+               && fingerprintSpaceLoads.isEmpty
+               && fingerprintVisibleLoads == 0,
+               "App Switcher skips private fingerprint work when current-Space filtering is off")
+        expect(SwitcherWindowObservationAction.action(for: "AXFocusedWindowChanged")
+               == .promoteElement
+               && SwitcherWindowObservationAction.action(for: "AXMainWindowChanged")
+               == .promoteElement
+               && SwitcherWindowObservationAction.action(for: "AXWindowCreated")
+               == .refreshFocusedWindow,
+               "App Switcher promotes focus changes but re-reads focus after window creation")
         let cachedMRUItems = (1...4).map { id in
             SwitcherItem.window(id: CGWindowID(id),
                                 title: "Window \(id)",
@@ -2113,6 +2164,39 @@ struct MetricsTests {
                                                    delta: -1,
                                                    wrapping: true))
         ], "App Switcher preserves exact event order across pending operation types")
+
+        var releasedPendingQuit = SwitcherRouteOwnership()
+        releasedPendingQuit.setTapLive(true)
+        guard case let .accepted(pendingQuitToken) = releasedPendingQuit.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns T1 before pending Q")
+            return
+        }
+        let pendingQ = SwitcherPendingKeyInput(keyCode: 12, text: "q", isRepeat: false)
+        expect(releasedPendingQuit.queuePendingKeyInput(pendingQ,
+                                                        letterAction: .quitApp,
+                                                        deletesSearchCharacter: false),
+               "App Switcher queues Q against T1")
+        _ = releasedPendingQuit.observePendingModifierFlags([])
+        guard case let .accepted(afterPendingQuitToken) = releasedPendingQuit.accept(
+            expectedWindowRoute
+        ) else {
+            expect(false, "App Switcher owns T2 after pending Q release")
+            return
+        }
+        _ = releasedPendingQuit.claim(pendingQuitToken)
+        expect(releasedPendingQuit.beginSession(pendingQuitToken)?.operations
+               == [.letterAction(.quitApp)]
+               && releasedPendingQuit.cancelSessionAfterPendingAction(
+                expectedToken: pendingQuitToken
+               )
+               && releasedPendingQuit.claim(afterPendingQuitToken)?.route == expectedWindowRoute
+               && releasedPendingQuit.beginSession(afterPendingQuitToken) != nil
+               && !releasedPendingQuit.cancelSessionAfterPendingAction(
+                expectedToken: pendingQuitToken
+               )
+               && releasedPendingQuit.activeToken == afterPendingQuitToken,
+               "App Switcher pending Q cancels exact released T1 and preserves T2")
 
         var pendingShiftEdges = SwitcherRouteOwnership()
         pendingShiftEdges.setTapLive(true)
@@ -3007,6 +3091,7 @@ struct MetricsTests {
                                                   windowOwnerPID: 919),
                "App Switcher probes an embedded target through its exact window owner")
         publishedSourceRoute.confirmAppActivation(pid: 909)
+        publishedSourceRoute.confirmAppActivation(pid: 919)
         publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken,
                                                      focusedWindowID: nil)
         publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken,
@@ -3020,7 +3105,7 @@ struct MetricsTests {
         publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken + 1,
                                                      focusedWindowID: 901)
         expect(publishedSourceRoute.windowActivationTarget(generation: publishedSessionToken) != nil,
-               "App Switcher ignores exact-window confirmation from a stale generation")
+               "App Switcher keeps exact-window activation through target and owner app focus")
         publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken,
                                                      focusedWindowID: 901)
         publishedSourceRoute.invalidatePendingRoute(token: afterPublicationToken)
@@ -3030,6 +3115,45 @@ struct MetricsTests {
         }
         expect(publishedSourceRoute.claim(afterConfirmationToken)?.source == nil,
                "App Switcher does not leak a confirmed activation source into later gestures")
+
+        var unrelatedWindowActivation = SwitcherRouteOwnership()
+        unrelatedWindowActivation.setTapLive(true)
+        guard case let .accepted(unrelatedWindowSessionToken) = unrelatedWindowActivation.accept(
+            expectedAppsRoute
+        ) else {
+            expect(false, "App Switcher owns a route before unrelated app activation")
+            return
+        }
+        _ = unrelatedWindowActivation.claim(unrelatedWindowSessionToken)
+        _ = unrelatedWindowActivation.beginSession(unrelatedWindowSessionToken)
+        _ = unrelatedWindowActivation.releaseActiveSession(for: [])
+        _ = unrelatedWindowActivation.claimReleasedSession(unrelatedWindowSessionToken)
+        _ = unrelatedWindowActivation.publishActivationSource(
+            activationSource,
+            generation: unrelatedWindowSessionToken
+        )
+        guard case let .accepted(behindUnrelatedActivationToken) = unrelatedWindowActivation.accept(
+            expectedWindowRoute
+        ) else {
+            expect(false, "App Switcher queues a route behind exact-window activation")
+            return
+        }
+        expect(unrelatedWindowActivation.claim(behindUnrelatedActivationToken)?.source
+               == activationSource,
+               "App Switcher initially binds a dependent route to exact-window activation")
+        unrelatedWindowActivation.invalidatePendingRoute(token: behindUnrelatedActivationToken)
+        guard case let .accepted(afterUnrelatedActivationToken) = unrelatedWindowActivation.accept(
+            expectedWindowRoute
+        ) else {
+            expect(false, "App Switcher queues a route before unrelated focus wins")
+            return
+        }
+        unrelatedWindowActivation.confirmAppActivation(pid: 777)
+        expect(unrelatedWindowActivation.windowActivationTarget(
+            generation: unrelatedWindowSessionToken
+        ) == nil
+               && unrelatedWindowActivation.claim(afterUnrelatedActivationToken)?.source == nil,
+               "App Switcher retires exact-window activation and dependencies on unrelated focus")
 
         var appOnlyActivation = SwitcherRouteOwnership()
         appOnlyActivation.setTapLive(true)

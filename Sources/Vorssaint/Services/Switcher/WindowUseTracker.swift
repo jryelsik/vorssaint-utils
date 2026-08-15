@@ -102,12 +102,17 @@ final class WindowUseTracker {
         }
     }
 
-    private func promote(window windowID: CGWindowID) {
+    private func promote(window windowID: CGWindowID, notifyChange: Bool = true) {
         let handler = stateLock.withLock { () -> (() -> Void)? in
             guard recording else { return nil }
             windowHistory = WindowUseOrder.promoting(windowID, in: windowHistory)
-            return windowChangeHandler
+            return notifyChange ? windowChangeHandler : nil
         }
+        handler?()
+    }
+
+    private func invalidateWarmWindowList() {
+        let handler = stateLock.withLock { recording ? windowChangeHandler : nil }
         handler?()
     }
 
@@ -336,7 +341,7 @@ final class WindowUseTracker {
         observedPID = nil
     }
 
-    private func readFocusedWindow(of pid: pid_t) {
+    private func readFocusedWindow(of pid: pid_t, notifyChange: Bool = true) {
         guard AXIsProcessTrusted() else { return }
         let application = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(application, Self.messagingTimeout)
@@ -348,13 +353,21 @@ final class WindowUseTracker {
         // A misbehaving app can answer with something that is not an element.
         let window = value as! AXUIElement
         guard let windowID = AXWindowResolver.windowID(for: window) else { return }
-        promote(window: windowID)
+        promote(window: windowID, notifyChange: notifyChange)
     }
 
     /// C callback: no captures, so the tracker travels in the refcon.
-    private static let focusCallback: AXObserverCallback = { _, element, _, refcon in
+    private static let focusCallback: AXObserverCallback = { _, element, notification, refcon in
         guard let refcon else { return }
         let tracker = Unmanaged<WindowUseTracker>.fromOpaque(refcon).takeUnretainedValue()
+        if SwitcherWindowObservationAction.action(for: notification as String)
+            == .refreshFocusedWindow {
+            tracker.invalidateWarmWindowList()
+            if let pid = tracker.observedPID {
+                tracker.readFocusedWindow(of: pid, notifyChange: false)
+            }
+            return
+        }
         guard let windowID = AXWindowResolver.windowID(for: element) else { return }
         tracker.promote(window: windowID)
     }
