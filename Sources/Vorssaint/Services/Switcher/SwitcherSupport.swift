@@ -51,6 +51,17 @@ enum SwitcherPendingOperation: Equatable {
     case keyCommand(SwitcherPendingKeyInput)
     case letterAction(SwitcherLetterAction)
     case searchText(String)
+    case terminal(SwitcherPendingTerminal)
+
+    var isTerminal: Bool {
+        if case .terminal = self { return true }
+        return false
+    }
+}
+
+enum SwitcherPendingTerminal: Equatable {
+    case commit
+    case cancel
 }
 
 struct SwitcherPendingFlagsObservation: Equatable {
@@ -128,6 +139,7 @@ struct SwitcherRouteOwnership {
         var shiftBackNavigationHeld: Bool
         var searchPinRequested = false
         var searchLength = 0
+        var terminal: SwitcherPendingTerminal?
     }
 
     private struct Active {
@@ -210,7 +222,7 @@ struct SwitcherRouteOwnership {
     private static func trimOperations(_ operations: inout [SwitcherPendingOperation]) {
         while operations.count > Self.pendingOperationLimit {
             let removable = operations.firstIndex { operation in
-                operation != .letterAction(.pinSearch)
+                operation != .letterAction(.pinSearch) && !operation.isTerminal
             }
             guard let removable else { return }
             operations.remove(at: removable)
@@ -273,12 +285,17 @@ struct SwitcherRouteOwnership {
     /// A late event can only join the pending generation that still exists.
     mutating func queuePendingKeyInput(_ input: SwitcherPendingKeyInput,
                                        letterAction: SwitcherLetterAction?,
-                                       deletesSearchCharacter: Bool) -> Bool {
+                                       deletesSearchCharacter: Bool,
+                                       terminal: SwitcherPendingTerminal? = nil) -> Bool {
         guard tapLive, !capturing, !sessionActive,
               let index = pending.lastIndex(where: { !$0.gestureEnded })
         else { return false }
 
-        if deletesSearchCharacter {
+        if let terminal {
+            pending[index].terminal = terminal
+            pending[index].gestureEnded = true
+            pending[index].operations.append(.terminal(terminal))
+        } else if deletesSearchCharacter {
             pending[index].searchLength = max(0, pending[index].searchLength - 1)
             pending[index].operations.append(.keyCommand(input))
         } else if pending[index].searchLength > 0 || pending[index].searchPinRequested {
@@ -298,6 +315,28 @@ struct SwitcherRouteOwnership {
             }
         } else if let text = input.text, !text.isEmpty {
             pending[index].searchLength = min(64, text.count)
+            pending[index].operations.append(.searchText(text))
+        } else {
+            pending[index].operations.append(.keyCommand(input))
+        }
+        Self.trimOperations(&pending[index].operations)
+        return true
+    }
+
+    /// During all-apps search, the Windows shortcut is query input just as it
+    /// is after the active session appears. The check and append share the
+    /// route lock so a startup handoff cannot change its meaning in between.
+    mutating func queuePendingWindowShortcutAsSearch(
+        _ input: SwitcherPendingKeyInput
+    ) -> Bool {
+        guard tapLive, !capturing, !sessionActive,
+              let index = pending.lastIndex(where: { !$0.gestureEnded }),
+              pending[index].route.scope == .allApps,
+              pending[index].searchLength > 0
+        else { return false }
+        if let text = input.text, !text.isEmpty {
+            pending[index].searchLength = min(64,
+                                              pending[index].searchLength + text.count)
             pending[index].operations.append(.searchText(text))
         } else {
             pending[index].operations.append(.keyCommand(input))
@@ -332,7 +371,7 @@ struct SwitcherRouteOwnership {
               pending.first?.token == token, pending[0].claimed
         else { return nil }
         let accepted = pending.removeFirst()
-        if !accepted.gestureEnded {
+        if !accepted.gestureEnded || accepted.terminal != nil {
             active = Active(token: accepted.token,
                             shortcut: accepted.route.shortcut,
                             searchPinned: accepted.searchPinRequested)
@@ -370,6 +409,14 @@ struct SwitcherRouteOwnership {
         self.active = nil
         released = Released(token: token)
         return token
+    }
+
+    /// Cancels only the active generation that queued Escape during startup.
+    /// A later physical gesture may already be pending and must survive.
+    mutating func cancelActiveSession(expectedToken token: UInt64) -> Bool {
+        guard active?.token == token else { return false }
+        active = nil
+        return true
     }
 
     /// Pins only the session that produced the key event. Delayed main-thread

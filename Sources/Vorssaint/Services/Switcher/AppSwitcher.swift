@@ -436,6 +436,17 @@ final class AppSwitcher: ObservableObject {
                 && (windowPositionalMatch
                     || windowShortcut.matchesByCharacter(event: event,
                                                          tolerating: heldModifiers))
+            let pendingInput = SwitcherPendingKeyInput(
+                keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+                text: printableSearchText(from: event),
+                isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            )
+            if matchesWindows,
+               routeLock.withLock({
+                   routeOwnership.queuePendingWindowShortcutAsSearch(pendingInput)
+               }) {
+                return nil
+            }
             guard let initialRoute = SwitcherSupport.initialRoute(
                 appsShortcut: shortcut,
                 windowShortcut: windowShortcut,
@@ -444,21 +455,23 @@ final class AppSwitcher: ObservableObject {
                 windowPositionalMatch: windowPositionalMatch,
                 shiftHeld: event.flags.contains(.maskShift)
             ) else {
-                let pendingInput = SwitcherPendingKeyInput(
-                    keyCode: event.getIntegerValueField(.keyboardEventKeycode),
-                    text: printableSearchText(from: event),
-                    isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-                )
                 let letterAction = SwitcherSupport.letterAction(
                     typedCharacter: pendingInput.text,
                     keyCode: pendingInput.keyCode,
                     pinSearchEnabled: pinSearchEnabled
                 )
+                let terminal: SwitcherPendingTerminal?
+                switch pendingInput.keyCode {
+                case KeyCode.enter: terminal = .commit
+                case KeyCode.escape: terminal = .cancel
+                default: terminal = nil
+                }
                 if routeLock.withLock({
                     routeOwnership.queuePendingKeyInput(
                         pendingInput,
                         letterAction: letterAction,
-                        deletesSearchCharacter: pendingInput.keyCode == KeyCode.delete
+                        deletesSearchCharacter: pendingInput.keyCode == KeyCode.delete,
+                        terminal: terminal
                     )
                 }) {
                     return nil
@@ -1256,6 +1269,11 @@ final class AppSwitcher: ObservableObject {
                 applyPendingLetterAction(action)
             case let .searchText(text):
                 appendSearchText(text)
+            case let .terminal(terminal):
+                switch terminal {
+                case .commit: commitSession()
+                case .cancel: cancelSession(expectedToken: expectedSessionToken)
+                }
             }
         }
     }
@@ -1481,6 +1499,13 @@ final class AppSwitcher: ObservableObject {
 
     private func cancelSession() {
         routeLock.withLock { routeOwnership.invalidateLifecycle() }
+        clearSessionState(preservingRouteLifecycle: true)
+    }
+
+    private func cancelSession(expectedToken: UInt64) {
+        guard routeLock.withLock({
+            routeOwnership.cancelActiveSession(expectedToken: expectedToken)
+        }) else { return }
         clearSessionState(preservingRouteLifecycle: true)
     }
 
