@@ -718,7 +718,13 @@ final class AppSwitcher: ObservableObject {
                     switch action {
                     case .closeWindow: closeSelectedWindow()
                     case .quitApp: quitSelectedApp()
-                    case .pinSearch: isSearchPinned = true
+                    case .pinSearch:
+                        if let expectedSessionToken,
+                           routeLock.withLock({
+                               routeOwnership.pinActiveSession(expectedToken: expectedSessionToken)
+                           }) {
+                            isSearchPinned = true
+                        }
                     }
                 }
             } else if let text {

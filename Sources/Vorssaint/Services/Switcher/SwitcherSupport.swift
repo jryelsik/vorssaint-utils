@@ -89,6 +89,9 @@ enum SwitcherActivationConfirmation {
 /// Accessibility walk is in progress; modifier release queues the next
 /// physical gesture as a separate session.
 struct SwitcherRouteOwnership {
+    static let pendingGestureLimit = 8
+    static let pendingNavigationLimit = 32
+
     private(set) var tapLive = false
     private(set) var capturing = false
 
@@ -104,6 +107,7 @@ struct SwitcherRouteOwnership {
     private struct Active {
         let token: UInt64
         let shortcut: GlobalShortcut
+        var searchPinned = false
     }
 
     private struct Released {
@@ -159,11 +163,20 @@ struct SwitcherRouteOwnership {
                 )
             } else {
                 current.navigation.append(operation)
+                if current.navigation.count > Self.pendingNavigationLimit {
+                    current.navigation.removeFirst(
+                        current.navigation.count - Self.pendingNavigationLimit
+                    )
+                }
             }
             pending[pending.count - 1] = current
             return .coalesced
         }
         generation &+= 1
+        if pending.count >= Self.pendingGestureLimit,
+           let evicted = pending.firstIndex(where: { !$0.claimed }) {
+            pending.remove(at: evicted)
+        }
         pending.append(Pending(token: generation,
                                route: route,
                                sourceGeneration: released?.token ?? activation?.generation))
@@ -235,6 +248,7 @@ struct SwitcherRouteOwnership {
     /// still invalidate the exact release before it activates anything.
     mutating func releaseActiveSession(for flags: CGEventFlags) -> UInt64? {
         guard let active,
+              !active.searchPinned,
               !active.shortcut.requiredModifiersHeld(in: flags)
         else { return nil }
         self.active = nil
@@ -256,6 +270,15 @@ struct SwitcherRouteOwnership {
         self.active = nil
         released = Released(token: token)
         return token
+    }
+
+    /// Pins only the session that produced the key event. Delayed main-thread
+    /// work cannot pin a replacement session that already owns routing.
+    @discardableResult
+    mutating func pinActiveSession(expectedToken token: UInt64) -> Bool {
+        guard active?.token == token else { return false }
+        active?.searchPinned = true
+        return true
     }
 
     mutating func claimReleasedSession(_ token: UInt64) -> Bool {

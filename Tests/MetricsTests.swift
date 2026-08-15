@@ -1921,6 +1921,135 @@ struct MetricsTests {
                && staleEnterRelease.activeToken == replacementEnterToken,
                "App Switcher stale Enter cannot release a replacement session")
 
+        var pinnedRoute = SwitcherRouteOwnership()
+        pinnedRoute.setTapLive(true)
+        guard case let .accepted(pinnedToken) = pinnedRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before search is pinned")
+            return
+        }
+        _ = pinnedRoute.claim(pinnedToken)
+        _ = pinnedRoute.beginSession(pinnedToken)
+        expect(pinnedRoute.pinActiveSession(expectedToken: pinnedToken)
+               && pinnedRoute.releaseActiveSession(for: []) == nil
+               && pinnedRoute.activeToken == pinnedToken,
+               "App Switcher keeps the exact pinned route active after modifier release")
+        expect(pinnedRoute.releaseActiveSession(expectedToken: pinnedToken) == pinnedToken,
+               "App Switcher Enter explicitly releases a pinned route")
+
+        var stalePinRoute = SwitcherRouteOwnership()
+        stalePinRoute.setTapLive(true)
+        guard case let .accepted(stalePinToken) = stalePinRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before a stale pin event")
+            return
+        }
+        _ = stalePinRoute.claim(stalePinToken)
+        _ = stalePinRoute.beginSession(stalePinToken)
+        stalePinRoute.invalidateLifecycle()
+        stalePinRoute.setTapLive(true)
+        guard case let .accepted(replacementPinToken) = stalePinRoute.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a replacement route after pin becomes stale")
+            return
+        }
+        _ = stalePinRoute.claim(replacementPinToken)
+        _ = stalePinRoute.beginSession(replacementPinToken)
+        expect(!stalePinRoute.pinActiveSession(expectedToken: stalePinToken)
+               && stalePinRoute.releaseActiveSession(for: []) == replacementPinToken,
+               "App Switcher stale pin cannot pin a replacement session")
+
+        var boundedGestures = SwitcherRouteOwnership()
+        boundedGestures.setTapLive(true)
+        var boundedGestureTokens: [UInt64] = []
+        for _ in 0..<(SwitcherRouteOwnership.pendingGestureLimit + 3) {
+            guard case let .accepted(token) = boundedGestures.accept(expectedAppsRoute) else {
+                expect(false, "App Switcher keeps consuming shortcuts after its gesture limit")
+                return
+            }
+            boundedGestureTokens.append(token)
+            _ = boundedGestures.observePendingModifierFlags([])
+        }
+        let evictedGestureTokens = boundedGestureTokens.dropLast(
+            SwitcherRouteOwnership.pendingGestureLimit
+        )
+        expect(evictedGestureTokens.allSatisfy { boundedGestures.claim($0) == nil },
+               "App Switcher makes evicted gesture tokens harmless")
+        var retainedGestureTokens: [UInt64] = []
+        for token in boundedGestureTokens.suffix(SwitcherRouteOwnership.pendingGestureLimit) {
+            guard boundedGestures.claim(token) != nil,
+                  boundedGestures.beginSession(token)?.gestureEnded == true else {
+                expect(false, "App Switcher retains each newest gesture in order")
+                return
+            }
+            retainedGestureTokens.append(token)
+            boundedGestures.completeReleasedSession(token)
+        }
+        expect(retainedGestureTokens.last == boundedGestureTokens.last
+               && !boundedGestures.hasPendingRoute,
+               "App Switcher bounds queued gestures at eight and drains the newest intent")
+
+        var boundedNavigation = SwitcherRouteOwnership()
+        boundedNavigation.setTapLive(true)
+        guard case let .accepted(boundedNavigationToken) = boundedNavigation.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before bounded navigation")
+            return
+        }
+        var allNavigation: [SwitcherPendingNavigation] = []
+        for index in 0..<(SwitcherRouteOwnership.pendingNavigationLimit + 5) {
+            let route = index.isMultiple(of: 2) ? expectedWindowRoute : reversedAppsRoute
+            expect(boundedNavigation.accept(route) == .coalesced,
+                   "App Switcher consumes matched navigation after its navigation limit")
+            allNavigation.append(SwitcherPendingNavigation(
+                command: route.scope,
+                delta: route.reversed ? -1 : 1,
+                wrapping: true
+            ))
+        }
+        _ = boundedNavigation.claim(boundedNavigationToken)
+        expect(boundedNavigation.beginSession(boundedNavigationToken)?.navigation
+               == Array(allNavigation.suffix(SwitcherRouteOwnership.pendingNavigationLimit)),
+               "App Switcher bounds navigation at 32 and retains the newest operations")
+
+        var compactedRepeats = SwitcherRouteOwnership()
+        compactedRepeats.setTapLive(true)
+        guard case let .accepted(compactedRepeatToken) = compactedRepeats.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher owns a route before repeat compaction")
+            return
+        }
+        for _ in 0..<(SwitcherRouteOwnership.pendingNavigationLimit * 4) {
+            expect(compactedRepeats.accept(expectedAppsRoute, isRepeat: true) == .coalesced,
+                   "App Switcher consumes a held repeat while startup is pending")
+        }
+        _ = compactedRepeats.claim(compactedRepeatToken)
+        expect(compactedRepeats.beginSession(compactedRepeatToken)?.navigation == [
+            SwitcherPendingNavigation(command: .allApps,
+                                      delta: SwitcherRouteOwnership.pendingNavigationLimit * 4,
+                                      wrapping: false)
+        ], "App Switcher compacts a long held repeat into one bounded operation")
+
+        var clearedBoundedRoutes = SwitcherRouteOwnership()
+        clearedBoundedRoutes.setTapLive(true)
+        var clearedTokens: [UInt64] = []
+        for _ in 0..<SwitcherRouteOwnership.pendingGestureLimit {
+            guard case let .accepted(token) = clearedBoundedRoutes.accept(expectedAppsRoute) else {
+                expect(false, "App Switcher queues bounded routes before capture")
+                return
+            }
+            clearedTokens.append(token)
+            _ = clearedBoundedRoutes.observePendingModifierFlags([])
+        }
+        clearedBoundedRoutes.setCapturing(true)
+        expect(!clearedBoundedRoutes.hasPendingRoute
+               && clearedTokens.allSatisfy { clearedBoundedRoutes.claim($0) == nil },
+               "App Switcher capture clears every retained bounded route")
+        clearedBoundedRoutes.setCapturing(false)
+        guard case let .accepted(teardownBoundedToken) = clearedBoundedRoutes.accept(expectedAppsRoute) else {
+            expect(false, "App Switcher accepts a route after capture ends")
+            return
+        }
+        clearedBoundedRoutes.setTapLive(false)
+        expect(!clearedBoundedRoutes.hasPendingRoute
+               && clearedBoundedRoutes.claim(teardownBoundedToken) == nil,
+               "App Switcher teardown clears every retained bounded route")
+
         var separateGestures = SwitcherRouteOwnership()
         separateGestures.setTapLive(true)
         guard case let .accepted(firstGestureToken) = separateGestures.accept(expectedAppsRoute) else {
