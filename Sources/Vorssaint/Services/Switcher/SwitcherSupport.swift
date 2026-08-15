@@ -107,6 +107,11 @@ struct SwitcherRouteClaim: Equatable {
     let source: SwitcherRouteSource?
 }
 
+enum SwitcherClaimedSessionResolution: Equatable {
+    case invalid
+    case valid(route: SwitcherInitialRoute, source: SwitcherRouteSource?)
+}
+
 struct SwitcherActivationWindowTarget: Equatable {
     let generation: UInt64
     let windowID: CGWindowID
@@ -372,17 +377,41 @@ struct SwitcherRouteOwnership {
         return SwitcherRouteClaim(route: pending[0].route, source: source)
     }
 
+    /// Revalidates an asynchronously claimed token without changing ownership.
+    /// A retired dependency is a valid route with no source, not a stale token.
+    func resolveClaimedSession(_ token: UInt64) -> SwitcherClaimedSessionResolution {
+        guard tapLive, !capturing, !sessionActive,
+              pending.first?.token == token, pending[0].claimed
+        else { return .invalid }
+        let source: SwitcherRouteSource?
+        if let sourceGeneration = pending[0].sourceGeneration,
+           activation?.generation == sourceGeneration {
+            source = activation?.source
+        } else {
+            source = nil
+        }
+        return .valid(route: pending[0].route, source: source)
+    }
+
     /// Atomically hands routing to the new session after its first selection
     /// exists. Repeats can keep accumulating until this exact transition.
     mutating func beginSession(_ token: UInt64) -> (route: SwitcherInitialRoute,
                                                     operations: [SwitcherPendingOperation],
                                                     searchPinned: Bool,
                                                     gestureEnded: Bool,
+                                                    source: SwitcherRouteSource?,
                                                     token: UInt64)? {
         guard tapLive, !capturing, !sessionActive,
               pending.first?.token == token, pending[0].claimed
         else { return nil }
         let accepted = pending.removeFirst()
+        let source: SwitcherRouteSource?
+        if let sourceGeneration = accepted.sourceGeneration,
+           activation?.generation == sourceGeneration {
+            source = activation?.source
+        } else {
+            source = nil
+        }
         if !accepted.gestureEnded || accepted.terminal != nil {
             active = Active(token: accepted.token,
                             shortcut: accepted.route.shortcut,
@@ -392,7 +421,7 @@ struct SwitcherRouteOwnership {
             released = Released(token: accepted.token)
         }
         return (accepted.route, accepted.operations, accepted.searchPinRequested,
-                accepted.gestureEnded, accepted.token)
+                accepted.gestureEnded, source, accepted.token)
     }
 
     /// Moves the route into a validation phase that remains lifecycle-owned.

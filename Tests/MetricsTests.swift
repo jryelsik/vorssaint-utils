@@ -2875,6 +2875,7 @@ struct MetricsTests {
         let staleMouseSource = SwitcherRouteSource(.appOnly(appName: "Stale Mouse", pid: 414))
         expect(pendingMouseRoute.invalidateColdPendingRoutesForMouseDown()
                && !pendingMouseRoute.hasPendingRoute
+               && pendingMouseRoute.resolveClaimedSession(mousePendingToken) == .invalid
                && pendingMouseRoute.beginSession(mousePendingToken) == nil
                && pendingMouseRoute.beginSession(secondMousePendingToken) == nil
                && pendingMouseRoute.releaseActiveSession(expectedToken: mousePendingToken) == nil
@@ -2890,8 +2891,23 @@ struct MetricsTests {
         }
         expect(afterMouseToken > secondMousePendingToken
                && pendingMouseRoute.claim(mousePendingToken) == nil
-               && pendingMouseRoute.claim(afterMouseToken)?.route == expectedAppsRoute,
+               && pendingMouseRoute.claim(afterMouseToken)?.route == expectedAppsRoute
+               && pendingMouseRoute.resolveClaimedSession(mousePendingToken) == .invalid
+               && pendingMouseRoute.resolveClaimedSession(afterMouseToken)
+               == .valid(route: expectedAppsRoute, source: nil),
                "App Switcher keeps stale mouse-dismissed tokens away from their replacement")
+
+        var asyncTeardownRoute = SwitcherRouteOwnership()
+        asyncTeardownRoute.setTapLive(true)
+        guard case let .accepted(asyncTeardownToken) = asyncTeardownRoute.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a claimed token before async teardown")
+            return
+        }
+        _ = asyncTeardownRoute.claim(asyncTeardownToken)
+        asyncTeardownRoute.setTapLive(false)
+        expect(asyncTeardownRoute.resolveClaimedSession(asyncTeardownToken) == .invalid,
+               "App Switcher rejects an async claimed continuation after teardown")
 
         var activeMouseRoute = SwitcherRouteOwnership()
         activeMouseRoute.setTapLive(true)
@@ -3104,7 +3120,9 @@ struct MetricsTests {
                "App Switcher retains an exact source through app activation and delayed window focus")
         publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken + 1,
                                                      focusedWindowID: 901)
-        expect(publishedSourceRoute.windowActivationTarget(generation: publishedSessionToken) != nil,
+        expect(publishedSourceRoute.windowActivationTarget(generation: publishedSessionToken) != nil
+               && publishedSourceRoute.resolveClaimedSession(afterPublicationToken)
+               == .valid(route: expectedAppsRoute, source: activationSource),
                "App Switcher keeps exact-window activation through target and owner app focus")
         publishedSourceRoute.confirmWindowActivation(generation: publishedSessionToken,
                                                      focusedWindowID: 901)
@@ -3148,11 +3166,15 @@ struct MetricsTests {
             expect(false, "App Switcher queues a route before unrelated focus wins")
             return
         }
+        let copiedUnrelatedSource = unrelatedWindowActivation.claim(afterUnrelatedActivationToken)
         unrelatedWindowActivation.confirmAppActivation(pid: 777)
         expect(unrelatedWindowActivation.windowActivationTarget(
             generation: unrelatedWindowSessionToken
         ) == nil
-               && unrelatedWindowActivation.claim(afterUnrelatedActivationToken)?.source == nil,
+               && copiedUnrelatedSource?.source == activationSource
+               && unrelatedWindowActivation.resolveClaimedSession(afterUnrelatedActivationToken)
+               == .valid(route: expectedWindowRoute, source: nil)
+               && unrelatedWindowActivation.beginSession(afterUnrelatedActivationToken)?.source == nil,
                "App Switcher retires exact-window activation and dependencies on unrelated focus")
 
         var appOnlyActivation = SwitcherRouteOwnership()

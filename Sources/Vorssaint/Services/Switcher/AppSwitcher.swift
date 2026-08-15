@@ -602,52 +602,63 @@ final class AppSwitcher: ObservableObject {
     private func handleAcceptedInitialRoute(token: UInt64) {
         invalidateCacheRefreshWork()
         guard Permissions.shared.accessibility, AXIsProcessTrusted(),
-              let claim = routeLock.withLock({ routeOwnership.claim(token) })
+              routeLock.withLock({ routeOwnership.claim(token) }) != nil
         else {
             routeLock.withLock {
                 routeOwnership.invalidatePendingRoute(token: token)
             }
             return
         }
-        prepareClaimedSession(token: token, claim: claim)
+        prepareClaimedSession(token: token)
     }
 
-    private func prepareClaimedSession(token: UInt64, claim: SwitcherRouteClaim) {
+    private func prepareClaimedSession(token: UInt64) {
         let capturedFingerprint = WindowEnumerator.captureSwitcherFingerprint()
         if capturedFingerprint.preferences.currentSpaceOnly {
             cacheRefreshQueue.async { [weak self] in
                 let fingerprint = WindowEnumerator.resolveSwitcherFingerprint(capturedFingerprint)
                 DispatchQueue.main.async { [weak self] in
-                    self?.beginClaimedSession(token: token,
-                                              claim: claim,
-                                              fingerprint: fingerprint)
+                    self?.beginClaimedSession(token: token, fingerprint: fingerprint)
                 }
             }
         } else {
             beginClaimedSession(
                 token: token,
-                claim: claim,
                 fingerprint: WindowEnumerator.resolveSwitcherFingerprint(capturedFingerprint)
             )
         }
     }
 
     private func beginClaimedSession(token: UInt64,
-                                     claim: SwitcherRouteClaim,
                                      fingerprint: SwitcherWindowFingerprint) {
-        guard Permissions.shared.accessibility, AXIsProcessTrusted(),
-              beginSession(reversed: claim.route.reversed,
-                           shortcut: claim.route.shortcut,
-                           scope: claim.route.scope,
-                           pendingRouteToken: token,
-                           logicalSource: claim.source,
-                           fingerprint: fingerprint)
-        else {
-            routeLock.withLock {
-                routeOwnership.invalidatePendingRoute(token: token)
-            }
-            scheduleWindowCacheRefresh()
+        guard Permissions.shared.accessibility, AXIsProcessTrusted() else {
+            routeLock.withLock { routeOwnership.invalidatePendingRoute(token: token) }
             return
+        }
+        guard case .valid = routeLock.withLock({
+            routeOwnership.resolveClaimedSession(token)
+        }) else { return }
+        let cacheDisposition = SwitcherSupport.cacheDisposition(
+            fingerprintMatches: cachedWindowFingerprint == fingerprint,
+            storedAt: cachedWindowStoredUptime,
+            now: ProcessInfo.processInfo.systemUptime,
+            maximumAge: Self.maximumWindowCacheAge
+        )
+        switch cacheDisposition {
+        case .reuse, .reuseAndRefresh:
+            installClaimedSession(token: token,
+                                  allWindows: cachedWindowItems,
+                                  cacheDisposition: cacheDisposition)
+        case .rebuild:
+            let snapshot = WindowEnumerator.captureSwitcherSnapshot()
+            cacheRefreshQueue.async { [weak self] in
+                let items = WindowEnumerator.listWindows(from: snapshot)
+                DispatchQueue.main.async { [weak self] in
+                    self?.installClaimedSession(token: token,
+                                                allWindows: items,
+                                                cacheDisposition: .rebuild)
+                }
+            }
         }
     }
 
@@ -697,7 +708,7 @@ final class AppSwitcher: ObservableObject {
             guard let handoff = routeLock.withLock({
                 routeOwnership.claimHandoff(route, expectedSessionToken: expectedSessionToken)
             }) else { return Unmanaged.passUnretained(event) }
-            prepareClaimedSession(token: handoff.token, claim: handoff.claim)
+            prepareClaimedSession(token: handoff.token)
             // The shortcut belongs to the switcher while the feature is on, so
             // the press is always consumed. With every window closed there is
             // nothing to switch to and nothing appears at all, instead of the
@@ -808,48 +819,53 @@ final class AppSwitcher: ObservableObject {
 
     // MARK: - Session lifecycle
 
-    /// Opens a session for the current windows. Does nothing when there is
-    /// nothing to switch to; the caller consumes the press either way.
-    @discardableResult
-    private func beginSession(reversed: Bool,
-                              shortcut: GlobalShortcut,
-                              scope: SwitcherSessionScope = .allApps,
-                              pendingRouteToken: UInt64,
-                              logicalSource: SwitcherRouteSource?,
-                              fingerprint: SwitcherWindowFingerprint) -> Bool {
+    /// Atomically accepts the exact claimed token before installing rebuilt
+    /// data or UI state. A stale worker completion returns without side effects.
+    private func installClaimedSession(token: UInt64,
+                                       allWindows: [SwitcherItem],
+                                       cacheDisposition: SwitcherCacheDisposition) {
+        guard let accepted = routeLock.withLock({ routeOwnership.beginSession(token) })
+        else { return }
         invalidateCacheRefreshWork()
-        guard let reportedFrontPID = logicalSource?.pid
-            ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
-        else { return false }
-        let cacheDisposition = SwitcherSupport.cacheDisposition(
-            fingerprintMatches: cachedWindowFingerprint == fingerprint,
-            storedAt: cachedWindowStoredUptime,
-            now: ProcessInfo.processInfo.systemUptime,
-            maximumAge: Self.maximumWindowCacheAge
-        )
+        let route = accepted.route
+        let logicalSource = accepted.source
         if cacheDisposition == .reuseAndRefresh {
             cachedWindowFingerprint = nil
             scheduleWindowCacheRefresh()
-        }
-        let allWindows = SwitcherSupport.sessionWindowItems(
-            cacheDisposition: cacheDisposition,
-            cached: cachedWindowItems
-        ) {
-            let refreshed = WindowEnumerator.listWindows()
-            cachedWindowItems = refreshed
+        } else if cacheDisposition == .rebuild {
+            cachedWindowItems = allWindows
             cachedWindowFingerprint = nil
+        }
+        guard let reportedFrontPID = logicalSource?.pid
+            ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
+        else {
+            _ = routeLock.withLock {
+                routeOwnership.cancelSessionAfterPendingAction(expectedToken: token)
+            }
             scheduleWindowCacheRefresh()
-            return refreshed
+            return
         }
         let windows: [SwitcherItem]
-        switch scope {
+        switch route.scope {
         case .allApps:
-            guard !allWindows.isEmpty else { return false }
+            guard !allWindows.isEmpty else {
+                _ = routeLock.withLock {
+                    routeOwnership.cancelSessionAfterPendingAction(expectedToken: token)
+                }
+                scheduleWindowCacheRefresh()
+                return
+            }
             windows = allWindows
         case .frontmostApp:
             let scoped = SwitcherSupport.frontmostAppWindows(allItems: allWindows,
                                                              frontmostPID: reportedFrontPID)
-            guard !scoped.isEmpty else { return false }
+            guard !scoped.isEmpty else {
+                _ = routeLock.withLock {
+                    routeOwnership.cancelSessionAfterPendingAction(expectedToken: token)
+                }
+                scheduleWindowCacheRefresh()
+                return
+            }
             windows = scoped
         }
         let focusedSourceWindowID = logicalSource?.windowID
@@ -868,14 +884,6 @@ final class AppSwitcher: ObservableObject {
                                                        items: windows)
 
         let list = orderedForSession(windows, currentID: source?.id)
-        let pendingOperations: [SwitcherPendingOperation]
-        let pendingGestureEnded: Bool
-        let pendingSearchPinned: Bool
-        guard let accepted = routeLock.withLock({ routeOwnership.beginSession(pendingRouteToken) })
-        else { return false }
-        pendingOperations = accepted.operations
-        pendingGestureEnded = accepted.gestureEnded
-        pendingSearchPinned = accepted.searchPinned
         sessionGeneration = accepted.token
 
         sessionItems = list
@@ -906,23 +914,23 @@ final class AppSwitcher: ObservableObject {
         // other window — the toggle target, which may be another window of the
         // same app. Shift starts from the far end. With no on-screen window
         // the session opens on the first entry from another app.
-        selectedIndex = scope == .frontmostApp
+        selectedIndex = route.scope == .frontmostApp
             ? SwitcherSupport.initialWindowScopedSelectionIndex(itemCount: list.count,
                                                                 hasForegroundItem: source != nil,
-                                                                reversed: reversed)
+                                                                reversed: route.reversed)
             : initialSelectionIndex(in: list,
-                                    reversed: reversed,
+                                    reversed: route.reversed,
                                     hasForegroundItem: source != nil,
                                     frontmostPID: SwitcherSupport.appPID(forFrontmost: reportedFrontPID,
                                                                          items: list))
-        sessionShortcut = shortcut
-        sessionScope = scope
-        shiftBackNavigationHeld = reversed && shortcut.shiftIsNavigationModifier
-        applyPendingOperations(pendingOperations, expectedSessionToken: accepted.token)
+        sessionShortcut = route.shortcut
+        sessionScope = route.scope
+        shiftBackNavigationHeld = route.reversed && route.shortcut.shiftIsNavigationModifier
+        applyPendingOperations(accepted.operations, expectedSessionToken: accepted.token)
 
         // Escape, Enter, W, or Q can end the session while queued input is
         // replayed. Do not start preview or panel work for that old token.
-        guard sessionGeneration == accepted.token, sessionActive else { return true }
+        guard sessionGeneration == accepted.token, sessionActive else { return }
 
         if capturesPreviews {
             WindowPreviewProvider.shared.refreshPreviews(for: list, maxPixelSize: 640 * PreviewSizing.scale) { [weak self] windowID, image in
@@ -935,9 +943,9 @@ final class AppSwitcher: ObservableObject {
         // A cache miss is rebuilt after the tap callback returns. Unpinned
         // quick flicks commit without flashing; pinned search always stays up.
         if SwitcherSupport.shouldShowPanelAfterStartup(
-            searchPinned: pendingSearchPinned,
-            gestureEnded: pendingGestureEnded,
-            requiredModifiersHeld: shortcut.requiredModifiersHeld(
+            searchPinned: accepted.searchPinned,
+            gestureEnded: accepted.gestureEnded,
+            requiredModifiersHeld: route.shortcut.requiredModifiersHeld(
                 in: CGEventSource.flagsState(.combinedSessionState)
             )
         ) {
@@ -947,7 +955,6 @@ final class AppSwitcher: ObservableObject {
                 commitReleasedSession(generation: sessionGeneration)
             }
         }
-        return true
     }
 
     // MARK: - Window cache
