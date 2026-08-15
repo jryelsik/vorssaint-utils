@@ -433,6 +433,14 @@ struct SwitcherRouteOwnership {
         return true
     }
 
+    /// Mouse-down may dismiss a normal session before its panel appears, but
+    /// terminal replay remains the sole owner of terminal Active lifecycles.
+    mutating func cancelActiveSessionForMouseDown(expectedToken token: UInt64) -> Bool {
+        guard active?.token == token, active?.terminal == nil else { return false }
+        active = nil
+        return true
+    }
+
     /// Pins only the session that produced the key event. Delayed main-thread
     /// work cannot pin a replacement session that already owns routing.
     @discardableResult
@@ -1626,7 +1634,7 @@ enum SwitcherSupport {
     static func shouldDismissForClick(panelIsVisible: Bool,
                                       panelFrame: CGRect,
                                       location: CGPoint) -> Bool {
-        panelIsVisible && !panelFrame.contains(location)
+        !panelIsVisible || !panelFrame.contains(location)
     }
 
     /// The letters the panel acts on: W closes the highlighted window, Q quits

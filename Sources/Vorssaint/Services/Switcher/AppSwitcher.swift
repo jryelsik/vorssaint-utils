@@ -589,7 +589,7 @@ final class AppSwitcher: ObservableObject {
             }
             return Unmanaged.passUnretained(event)
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            dismissForClickOutsidePanel()
+            dismissForClickOutsidePanel(expectedToken: expectedSessionToken)
             return Unmanaged.passUnretained(event)
         default:
             return Unmanaged.passUnretained(event)
@@ -1581,13 +1581,19 @@ final class AppSwitcher: ObservableObject {
     /// tap. This preserves the click and prevents a nearly simultaneous Command
     /// release from committing the highlighted window first (issues #384 and
     /// #539).
-    private func dismissForClickOutsidePanel() {
-        guard sessionActive, let panel else { return }
-        guard SwitcherSupport.shouldDismissForClick(panelIsVisible: panel.isVisible,
-                                                    panelFrame: panel.frame,
-                                                    location: NSEvent.mouseLocation)
+    private func dismissForClickOutsidePanel(expectedToken: UInt64?) {
+        guard sessionActive, let expectedToken else { return }
+        let shouldDismiss = panel.map {
+            SwitcherSupport.shouldDismissForClick(panelIsVisible: $0.isVisible,
+                                                  panelFrame: $0.frame,
+                                                  location: NSEvent.mouseLocation)
+        } ?? true
+        guard shouldDismiss
         else { return }
-        cancelSession()
+        guard routeLock.withLock({
+            routeOwnership.cancelActiveSessionForMouseDown(expectedToken: expectedToken)
+        }) else { return }
+        clearSessionState(preservingRouteLifecycle: true)
     }
 
     /// Re-fits the panel after the grid changed mid-session (e.g. an app quit

@@ -2778,8 +2778,23 @@ struct MetricsTests {
         _ = activeMouseRoute.claim(activeMouseToken)
         _ = activeMouseRoute.beginSession(activeMouseToken)
         expect(!activeMouseRoute.invalidateColdPendingRoutesForMouseDown()
-               && activeMouseRoute.activeToken == activeMouseToken,
-               "App Switcher leaves an active lifecycle to outside-click handling")
+               && activeMouseRoute.activeToken == activeMouseToken
+               && activeMouseRoute.cancelActiveSessionForMouseDown(
+                expectedToken: activeMouseToken
+               )
+               && activeMouseRoute.releaseActiveSession(expectedToken: activeMouseToken) == nil,
+               "App Switcher cancels the exact hidden Active before it can commit")
+        guard case let .accepted(replacementMouseActiveToken) = activeMouseRoute.accept(
+            expectedWindowRoute
+        ) else {
+            expect(false, "App Switcher accepts a replacement after hidden Active cancellation")
+            return
+        }
+        _ = activeMouseRoute.claim(replacementMouseActiveToken)
+        _ = activeMouseRoute.beginSession(replacementMouseActiveToken)
+        expect(!activeMouseRoute.cancelActiveSessionForMouseDown(expectedToken: activeMouseToken)
+               && activeMouseRoute.activeToken == replacementMouseActiveToken,
+               "App Switcher stale mouse-down cannot cancel its replacement session")
 
         var terminalMouseRoute = SwitcherRouteOwnership()
         terminalMouseRoute.setTapLive(true)
@@ -2803,6 +2818,9 @@ struct MetricsTests {
         expect(!terminalMouseRoute.invalidateColdPendingRoutesForMouseDown()
                && terminalMouseRoute.activeToken == terminalMouseToken
                && terminalMouseRoute.hasPendingRoute
+               && !terminalMouseRoute.cancelActiveSessionForMouseDown(
+                expectedToken: terminalMouseToken
+               )
                && terminalMouseRoute.cancelActiveSession(expectedToken: terminalMouseToken)
                && terminalMouseRoute.claim(behindTerminalMouseToken)?.route
                == expectedWindowRoute,
@@ -2825,6 +2843,9 @@ struct MetricsTests {
             return
         }
         expect(!releasedMouseRoute.invalidateColdPendingRoutesForMouseDown()
+               && !releasedMouseRoute.cancelActiveSessionForMouseDown(
+                expectedToken: releasedMouseToken
+               )
                && releasedMouseRoute.hasSessionLifecycle
                && releasedMouseRoute.hasPendingRoute,
                "App Switcher preserves released lifecycle ownership and its queued gesture")
@@ -2865,6 +2886,9 @@ struct MetricsTests {
             return
         }
         expect(!activationMouseRoute.invalidateColdPendingRoutesForMouseDown()
+               && !activationMouseRoute.cancelActiveSessionForMouseDown(
+                expectedToken: activationMouseToken
+               )
                && activationMouseRoute.windowActivationTarget(generation: activationMouseToken)
                != nil
                && activationMouseRoute.claim(behindActivationMouseToken)?.source
@@ -8803,10 +8827,10 @@ struct MetricsTests {
                                                       panelFrame: switcherPanelFrame,
                                                       location: CGPoint(x: 401, y: 301)),
                "App Switcher panel counts its own edge as part of it")
-        expect(!SwitcherSupport.shouldDismissForClick(panelIsVisible: false,
-                                                      panelFrame: switcherPanelFrame,
-                                                      location: CGPoint(x: 200, y: 200)),
-               "App Switcher ignores clicks while a quick switch shows no panel")
+        expect(SwitcherSupport.shouldDismissForClick(panelIsVisible: false,
+                                                     panelFrame: switcherPanelFrame,
+                                                     location: CGPoint(x: 200, y: 200)),
+               "App Switcher cancels a startup session before its panel appears")
         let searchRecords = [
             SwitcherSearchRecord(id: "alpha", title: "Inbox", appName: "Alpha"),
             SwitcherSearchRecord(id: "beta", title: "Vorssaint Roadmap", appName: "Beta"),
