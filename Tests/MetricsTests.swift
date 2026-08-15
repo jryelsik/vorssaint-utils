@@ -2732,6 +2732,106 @@ struct MetricsTests {
                && !tornDownRoute.sessionActive,
                "App Switcher releases ownership after empty or failed session startup")
 
+        var pendingMouseRoute = SwitcherRouteOwnership()
+        pendingMouseRoute.setTapLive(true)
+        guard case let .accepted(mousePendingToken) = pendingMouseRoute.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a cold route before mouse dismissal")
+            return
+        }
+        _ = pendingMouseRoute.observePendingModifierFlags([])
+        guard case let .accepted(secondMousePendingToken) = pendingMouseRoute.accept(
+            expectedWindowRoute
+        ) else {
+            expect(false, "App Switcher owns a second cold gesture before mouse dismissal")
+            return
+        }
+        _ = pendingMouseRoute.claim(mousePendingToken)
+        let staleMouseSource = SwitcherRouteSource(.appOnly(appName: "Stale Mouse", pid: 414))
+        expect(pendingMouseRoute.invalidateColdPendingRoutesForMouseDown()
+               && !pendingMouseRoute.hasPendingRoute
+               && pendingMouseRoute.beginSession(mousePendingToken) == nil
+               && pendingMouseRoute.beginSession(secondMousePendingToken) == nil
+               && pendingMouseRoute.releaseActiveSession(expectedToken: mousePendingToken) == nil
+               && !pendingMouseRoute.cancelActiveSession(expectedToken: mousePendingToken)
+               && !pendingMouseRoute.claimReleasedSession(mousePendingToken)
+               && !pendingMouseRoute.publishActivationSource(staleMouseSource,
+                                                              generation: mousePendingToken),
+               "App Switcher mouse-down invalidates every accepted or claimed cold token")
+        guard case let .accepted(afterMouseToken) = pendingMouseRoute.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher accepts a replacement after cold mouse dismissal")
+            return
+        }
+        expect(afterMouseToken > secondMousePendingToken
+               && pendingMouseRoute.claim(mousePendingToken) == nil
+               && pendingMouseRoute.claim(afterMouseToken)?.route == expectedAppsRoute,
+               "App Switcher keeps stale mouse-dismissed tokens away from their replacement")
+
+        var activeMouseRoute = SwitcherRouteOwnership()
+        activeMouseRoute.setTapLive(true)
+        guard case let .accepted(activeMouseToken) = activeMouseRoute.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns an active route before mouse-down")
+            return
+        }
+        _ = activeMouseRoute.claim(activeMouseToken)
+        _ = activeMouseRoute.beginSession(activeMouseToken)
+        expect(!activeMouseRoute.invalidateColdPendingRoutesForMouseDown()
+               && activeMouseRoute.activeToken == activeMouseToken,
+               "App Switcher leaves an active lifecycle to outside-click handling")
+
+        var terminalMouseRoute = SwitcherRouteOwnership()
+        terminalMouseRoute.setTapLive(true)
+        guard case let .accepted(terminalMouseToken) = terminalMouseRoute.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a terminal route before mouse-down")
+            return
+        }
+        _ = terminalMouseRoute.queuePendingKeyInput(pendingEscape,
+                                                     letterAction: nil,
+                                                     deletesSearchCharacter: false,
+                                                     terminal: .cancel)
+        _ = terminalMouseRoute.claim(terminalMouseToken)
+        _ = terminalMouseRoute.beginSession(terminalMouseToken)
+        guard case let .accepted(behindTerminalMouseToken) = terminalMouseRoute.accept(
+            expectedWindowRoute
+        ) else {
+            expect(false, "App Switcher queues a gesture behind terminal mouse-down")
+            return
+        }
+        expect(!terminalMouseRoute.invalidateColdPendingRoutesForMouseDown()
+               && terminalMouseRoute.activeToken == terminalMouseToken
+               && terminalMouseRoute.hasPendingRoute
+               && terminalMouseRoute.cancelActiveSession(expectedToken: terminalMouseToken)
+               && terminalMouseRoute.claim(behindTerminalMouseToken)?.route
+               == expectedWindowRoute,
+               "App Switcher preserves terminal ownership and its queued gesture on mouse-down")
+
+        var releasedMouseRoute = SwitcherRouteOwnership()
+        releasedMouseRoute.setTapLive(true)
+        guard case let .accepted(releasedMouseToken) = releasedMouseRoute.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a route before released mouse-down")
+            return
+        }
+        _ = releasedMouseRoute.claim(releasedMouseToken)
+        _ = releasedMouseRoute.beginSession(releasedMouseToken)
+        _ = releasedMouseRoute.releaseActiveSession(expectedToken: releasedMouseToken)
+        guard case let .accepted(behindReleasedMouseToken) = releasedMouseRoute.accept(
+            expectedWindowRoute
+        ) else {
+            expect(false, "App Switcher queues a gesture behind a released lifecycle")
+            return
+        }
+        expect(!releasedMouseRoute.invalidateColdPendingRoutesForMouseDown()
+               && releasedMouseRoute.hasSessionLifecycle
+               && releasedMouseRoute.hasPendingRoute,
+               "App Switcher preserves released lifecycle ownership and its queued gesture")
+        releasedMouseRoute.completeReleasedSession(releasedMouseToken)
+        expect(releasedMouseRoute.claim(behindReleasedMouseToken)?.route == expectedWindowRoute,
+               "App Switcher keeps the gesture queued behind a released mouse-down")
+
         let activationTarget = SwitcherItem.window(id: 901,
                                                    title: "Target",
                                                    appName: "Target App",
@@ -2744,6 +2844,32 @@ struct MetricsTests {
         expect(SwitcherActivationConfirmation.probeDelays == [0, 0.12, 0.18, 0.38, 0.68]
                && SwitcherActivationConfirmation.timeout == 0.8,
                "App Switcher probes ordinary and fullscreen focus before its bounded timeout")
+        var activationMouseRoute = SwitcherRouteOwnership()
+        activationMouseRoute.setTapLive(true)
+        guard case let .accepted(activationMouseToken) = activationMouseRoute.accept(
+            expectedAppsRoute
+        ) else {
+            expect(false, "App Switcher owns a route before activation mouse-down")
+            return
+        }
+        _ = activationMouseRoute.claim(activationMouseToken)
+        _ = activationMouseRoute.beginSession(activationMouseToken)
+        _ = activationMouseRoute.releaseActiveSession(expectedToken: activationMouseToken)
+        _ = activationMouseRoute.claimReleasedSession(activationMouseToken)
+        _ = activationMouseRoute.publishActivationSource(activationSource,
+                                                          generation: activationMouseToken)
+        guard case let .accepted(behindActivationMouseToken) = activationMouseRoute.accept(
+            expectedWindowRoute
+        ) else {
+            expect(false, "App Switcher queues a gesture behind activation")
+            return
+        }
+        expect(!activationMouseRoute.invalidateColdPendingRoutesForMouseDown()
+               && activationMouseRoute.windowActivationTarget(generation: activationMouseToken)
+               != nil
+               && activationMouseRoute.claim(behindActivationMouseToken)?.source
+               == activationSource,
+               "App Switcher preserves activation ownership and its queued gesture on mouse-down")
         var releasedTeardown = SwitcherRouteOwnership()
         releasedTeardown.setTapLive(true)
         guard case let .accepted(releasedTeardownToken) = releasedTeardown.accept(expectedAppsRoute) else {

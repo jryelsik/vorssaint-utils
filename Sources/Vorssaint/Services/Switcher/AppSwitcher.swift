@@ -398,6 +398,11 @@ final class AppSwitcher: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
+        if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown,
+           routeLock.withLock({ routeOwnership.invalidateColdPendingRoutesForMouseDown() }) {
+            return Unmanaged.passUnretained(event)
+        }
+
         let (shortcut, windowShortcut, routingShortcut, pinSearchEnabled,
              capturing, pendingFlagsConsumed, releasedSession) = routeLock.withLock {
             let pendingFlagsObservation = type == .flagsChanged

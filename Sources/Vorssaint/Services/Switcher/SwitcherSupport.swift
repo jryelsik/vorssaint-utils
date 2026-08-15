@@ -538,6 +538,16 @@ struct SwitcherRouteOwnership {
         pending.remove(at: index)
         generation &+= 1
     }
+
+    /// A click before startup completes dismisses every cold gesture. Once a
+    /// lifecycle exists, this path leaves it and any dependent gesture intact.
+    mutating func invalidateColdPendingRoutesForMouseDown() -> Bool {
+        guard active == nil, released == nil, activation == nil, !pending.isEmpty else {
+            return false
+        }
+        invalidatePendingRoute()
+        return true
+    }
 }
 
 enum SwitcherCacheDisposition: Equatable {
