@@ -38,6 +38,14 @@ struct SwitcherPendingNavigation: Equatable {
     let wrapping: Bool
 }
 
+/// A key the event tap consumed while main was still building the session.
+/// It stores only the values needed after startup, never the tap's CGEvent.
+struct SwitcherPendingKeyInput: Equatable {
+    let keyCode: Int64
+    let text: String?
+    let isRepeat: Bool
+}
+
 enum SwitcherPendingRouteAcceptance: Equatable {
     case accepted(UInt64)
     case coalesced
@@ -91,6 +99,7 @@ enum SwitcherActivationConfirmation {
 struct SwitcherRouteOwnership {
     static let pendingGestureLimit = 8
     static let pendingNavigationLimit = 32
+    static let pendingKeyInputLimit = 64
 
     private(set) var tapLive = false
     private(set) var capturing = false
@@ -100,6 +109,7 @@ struct SwitcherRouteOwnership {
         let route: SwitcherInitialRoute
         var sourceGeneration: UInt64?
         var navigation: [SwitcherPendingNavigation] = []
+        var keyInputs: [SwitcherPendingKeyInput] = []
         var claimed = false
         var gestureEnded = false
     }
@@ -210,6 +220,22 @@ struct SwitcherRouteOwnership {
         return true
     }
 
+    /// Keeps commands owned by a live accepted gesture from leaking into
+    /// the foreground app while its Accessibility enumeration is in progress.
+    /// A late event can only join the pending generation that still exists.
+    mutating func queuePendingKeyInput(_ input: SwitcherPendingKeyInput) -> Bool {
+        guard tapLive, !capturing, !sessionActive,
+              let index = pending.lastIndex(where: { !$0.gestureEnded })
+        else { return false }
+        pending[index].keyInputs.append(input)
+        if pending[index].keyInputs.count > Self.pendingKeyInputLimit {
+            pending[index].keyInputs.removeFirst(
+                pending[index].keyInputs.count - Self.pendingKeyInputLimit
+            )
+        }
+        return true
+    }
+
     mutating func claim(_ token: UInt64) -> SwitcherRouteClaim? {
         guard tapLive, !capturing, !sessionActive,
               pending.first?.token == token, !pending[0].claimed
@@ -229,6 +255,7 @@ struct SwitcherRouteOwnership {
     /// exists. Repeats can keep accumulating until this exact transition.
     mutating func beginSession(_ token: UInt64) -> (route: SwitcherInitialRoute,
                                                     navigation: [SwitcherPendingNavigation],
+                                                    keyInputs: [SwitcherPendingKeyInput],
                                                     gestureEnded: Bool,
                                                     token: UInt64)? {
         guard tapLive, !capturing, !sessionActive,
@@ -240,7 +267,8 @@ struct SwitcherRouteOwnership {
         } else {
             released = Released(token: accepted.token)
         }
-        return (accepted.route, accepted.navigation, accepted.gestureEnded, accepted.token)
+        return (accepted.route, accepted.navigation, accepted.keyInputs,
+                accepted.gestureEnded, accepted.token)
     }
 
     /// Moves the route into a validation phase that remains lifecycle-owned.
@@ -710,6 +738,24 @@ enum SwitcherSupport {
                                    cached: [SwitcherItem],
                                    rebuild: () -> [SwitcherItem]) -> [SwitcherItem] {
         cacheDisposition == .rebuild ? rebuild() : cached
+    }
+
+    /// Applies the switcher's immediate MRU update to a warm cache. This is
+    /// needed for same-app switches because they do not activate a new app or
+    /// change the WindowServer fingerprint used to validate the cache.
+    static func cachedItemsAfterSwitch(_ items: [SwitcherItem],
+                                       target: CGWindowID?,
+                                       previous: CGWindowID?) -> [SwitcherItem] {
+        var ordered = items
+        func promote(_ windowID: CGWindowID?) {
+            guard let windowID,
+                  let index = ordered.firstIndex(where: { $0.windowID == windowID })
+            else { return }
+            ordered.insert(ordered.remove(at: index), at: 0)
+        }
+        promote(previous)
+        promote(target)
+        return ordered
     }
 
     static func initialRoute(appsShortcut: GlobalShortcut,

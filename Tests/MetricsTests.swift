@@ -1781,6 +1781,27 @@ struct MetricsTests {
                "App Switcher invalidates its cache when a window moves between desktops")
         expect(stableWindowFingerprint != windowFingerprint(mergeTabs: true),
                "App Switcher invalidates its cache when grouping preferences change")
+        let cachedMRUItems = (1...4).map { id in
+            SwitcherItem.window(id: CGWindowID(id),
+                                title: "Window \(id)",
+                                appName: "Editor",
+                                pid: 101,
+                                isOnScreen: true,
+                                frame: .zero)
+        }
+        let afterCachedSwitchToThird = SwitcherSupport.cachedItemsAfterSwitch(
+            cachedMRUItems,
+            target: 3,
+            previous: 1
+        )
+        let afterCachedSwitchToFourth = SwitcherSupport.cachedItemsAfterSwitch(
+            afterCachedSwitchToThird,
+            target: 4,
+            previous: 3
+        )
+        expect(afterCachedSwitchToThird.compactMap(\.windowID) == [3, 1, 2, 4]
+               && afterCachedSwitchToFourth.compactMap(\.windowID) == [4, 3, 1, 2],
+               "App Switcher updates cached MRU order after rapid same-app switches")
         let acceptedAppsRoute = SwitcherSupport.initialRoute(
             appsShortcut: .switcherDefault,
             windowShortcut: .switcherWindowDefault,
@@ -1814,6 +1835,73 @@ struct MetricsTests {
                && begunPendingRoute?.gestureEnded == false
                && pendingRoute.sessionActive,
                "App Switcher preserves fresh wrapping and held-repeat clamping when startup finishes")
+
+        let coldStartInputs = [
+            SwitcherPendingKeyInput(keyCode: 13, text: "w", isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 12, text: "q", isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 1, text: "s", isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 53, text: nil, isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 36, text: "\r", isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 123, text: nil, isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 124, text: nil, isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 125, text: nil, isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 126, text: nil, isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 51, text: nil, isRepeat: false),
+            SwitcherPendingKeyInput(keyCode: 0, text: "a", isRepeat: false)
+        ]
+        var pendingCommands = SwitcherRouteOwnership()
+        pendingCommands.setTapLive(true)
+        guard case let .accepted(pendingCommandsToken) = pendingCommands.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a route before cold-start commands")
+            return
+        }
+        _ = pendingCommands.claim(pendingCommandsToken)
+        expect(coldStartInputs.allSatisfy { pendingCommands.queuePendingKeyInput($0) },
+               "App Switcher consumes commands while cold Accessibility startup is pending")
+        expect(pendingCommands.beginSession(pendingCommandsToken)?.keyInputs == coldStartInputs,
+               "App Switcher replays commands and search input after startup")
+
+        var boundedPendingInputs = SwitcherRouteOwnership()
+        boundedPendingInputs.setTapLive(true)
+        guard case let .accepted(boundedPendingInputsToken) = boundedPendingInputs.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a route before bounded cold-start input")
+            return
+        }
+        let allPendingInputs = (0..<(SwitcherRouteOwnership.pendingKeyInputLimit + 7)).map {
+            SwitcherPendingKeyInput(keyCode: Int64($0), text: "\($0)", isRepeat: false)
+        }
+        expect(allPendingInputs.allSatisfy { boundedPendingInputs.queuePendingKeyInput($0) },
+               "App Switcher keeps consuming cold-start input after reaching its queue limit")
+        _ = boundedPendingInputs.claim(boundedPendingInputsToken)
+        expect(boundedPendingInputs.beginSession(boundedPendingInputsToken)?.keyInputs
+               == Array(allPendingInputs.suffix(SwitcherRouteOwnership.pendingKeyInputLimit)),
+               "App Switcher bounds cold-start input and keeps the newest intent")
+
+        var stalePendingInputs = SwitcherRouteOwnership()
+        stalePendingInputs.setTapLive(true)
+        guard case let .accepted(stalePendingInputToken) = stalePendingInputs.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a route before pending input becomes stale")
+            return
+        }
+        expect(stalePendingInputs.queuePendingKeyInput(coldStartInputs[0]),
+               "App Switcher owns pending input before lifecycle invalidation")
+        stalePendingInputs.invalidateLifecycle()
+        stalePendingInputs.setTapLive(true)
+        guard case let .accepted(replacementPendingInputToken) = stalePendingInputs.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns a replacement route after pending input becomes stale")
+            return
+        }
+        expect(stalePendingInputs.queuePendingKeyInput(coldStartInputs[1]),
+               "App Switcher assigns input to the replacement route")
+        _ = stalePendingInputs.claim(replacementPendingInputToken)
+        expect(stalePendingInputs.beginSession(stalePendingInputToken) == nil
+               && stalePendingInputs.beginSession(replacementPendingInputToken)?.keyInputs
+                    == [coldStartInputs[1]],
+               "App Switcher clears stale pending input without affecting its replacement")
 
         var alternateAppsFirst = SwitcherRouteOwnership()
         alternateAppsFirst.setTapLive(true)
