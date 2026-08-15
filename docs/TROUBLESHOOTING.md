@@ -61,7 +61,10 @@ To wipe Vorssaint's granted permissions and let macOS ask again from scratch, pi
 
 ## Clean uninstall
 
-The bundled script takes out everything Vorssaint added, the app itself, its preferences and saved state, the login item, its privacy grants, and the optional closed lid `sudoers` rule.
+The bundled script takes out everything Vorssaint added: the app itself, its
+preferences and saved state, the login item, its privacy grants, and the
+optional closed lid `sudoers` rule. It does not remove downloaded media or
+files in folders you selected for the Video Downloader or other features.
 
 ```sh
 ./Tools/uninstall.sh

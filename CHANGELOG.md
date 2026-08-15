@@ -24,6 +24,8 @@ making source builds compatible with older development tools.
   optional shortcuts.
 - Emoji can open directly from a shortcut assigned to its Command Bar row.
   Thanks to @MaximilianMauroner.
+- Video Downloader can inspect a non-live HTTP or HTTPS media link and save a losslessly
+  merged or remuxed MP4 or a highest-quality MP3 using local tools.
 
 ### Changed
 - Volume Mixer percentages can now be entered directly for the system output and each app.

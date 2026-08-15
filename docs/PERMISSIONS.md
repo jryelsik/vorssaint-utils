@@ -12,6 +12,7 @@ You can review or change every grant in System Settings, under Privacy and Secur
 | Microphone | Yes | Your voice in a screen recording, only when you turn it on |
 | Camera | Yes | The camera preview mirror |
 | Notifications | Yes | Keep awake, battery, Monitor and update alerts |
+| Files & Folders | Yes | The Video Downloader's explicitly chosen destination folder, plus WhatsApp download cleanup and experimental organizer checks when you use them |
 | Full Disk Access | Yes | A deeper uninstaller scan |
 | Administrator (one time) | Yes | Password free closed lid toggling |
 | Automation | Yes | Finder cut and paste, moving leftovers to the Trash, emptying the Trash and Homebrew Terminal handoff |
@@ -95,6 +96,24 @@ You can review or change every grant in System Settings, under Privacy and Secur
 **If you say no.** Vorssaint runs without a peep, and the same information is still right there in the panel and in Settings.
 
 **Optional.** Yes.
+
+## Files & Folders
+
+**Why it comes up.** macOS protects user-selected folders from apps that have
+not previously been granted access. Vorssaint asks for this permission only
+when a feature that needs a folder is enabled or used.
+
+**What uses it.** The Video Downloader saves a finished MP4 or MP3 only in the
+destination folder you explicitly choose. WhatsApp download cleanup and the
+experimental organizer use it only when you ask them to inspect or change a
+folder. The downloader does not scan Downloads or another folder at launch.
+
+**If you say no.** The feature stays unavailable until you choose Allow or
+grant access later in System Settings, under Privacy and Security, Files and
+Folders. The rest of Vorssaint keeps working.
+
+**Optional.** Yes. Vorssaint does not request broad disk access for the
+downloader; the folder grant is scoped by macOS to the location you choose.
 
 ## Full Disk Access
 
