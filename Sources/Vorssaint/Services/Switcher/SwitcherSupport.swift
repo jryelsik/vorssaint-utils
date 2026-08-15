@@ -46,6 +46,21 @@ struct SwitcherPendingKeyInput: Equatable {
     let isRepeat: Bool
 }
 
+enum SwitcherPendingOperation: Equatable {
+    case navigation(SwitcherPendingNavigation)
+    case keyCommand(SwitcherPendingKeyInput)
+    case letterAction(SwitcherLetterAction)
+    case searchText(String)
+}
+
+struct SwitcherPendingFlagsObservation: Equatable {
+    let gestureEnded: Bool
+    let consumesEvent: Bool
+
+    static let none = SwitcherPendingFlagsObservation(gestureEnded: false,
+                                                       consumesEvent: false)
+}
+
 enum SwitcherPendingRouteAcceptance: Equatable {
     case accepted(UInt64)
     case coalesced
@@ -98,8 +113,7 @@ enum SwitcherActivationConfirmation {
 /// physical gesture as a separate session.
 struct SwitcherRouteOwnership {
     static let pendingGestureLimit = 8
-    static let pendingNavigationLimit = 32
-    static let pendingKeyInputLimit = 64
+    static let pendingOperationLimit = 64
 
     private(set) var tapLive = false
     private(set) var capturing = false
@@ -108,10 +122,12 @@ struct SwitcherRouteOwnership {
         let token: UInt64
         let route: SwitcherInitialRoute
         var sourceGeneration: UInt64?
-        var navigation: [SwitcherPendingNavigation] = []
-        var keyInputs: [SwitcherPendingKeyInput] = []
+        var operations: [SwitcherPendingOperation] = []
         var claimed = false
         var gestureEnded = false
+        var shiftBackNavigationHeld: Bool
+        var searchPinRequested = false
+        var searchLength = 0
     }
 
     private struct Active {
@@ -162,22 +178,18 @@ struct SwitcherRouteOwnership {
                                                       delta: route.reversed ? -1 : 1,
                                                       wrapping: !isRepeat)
             if isRepeat,
-               let last = current.navigation.last,
+               case let .navigation(last)? = current.operations.last,
                last.command == operation.command,
                last.wrapping == operation.wrapping,
                last.delta.signum() == operation.delta.signum() {
-                current.navigation[current.navigation.count - 1] = SwitcherPendingNavigation(
-                    command: last.command,
-                    delta: last.delta + operation.delta,
-                    wrapping: false
+                current.operations[current.operations.count - 1] = .navigation(
+                    SwitcherPendingNavigation(command: last.command,
+                                              delta: last.delta + operation.delta,
+                                              wrapping: false)
                 )
             } else {
-                current.navigation.append(operation)
-                if current.navigation.count > Self.pendingNavigationLimit {
-                    current.navigation.removeFirst(
-                        current.navigation.count - Self.pendingNavigationLimit
-                    )
-                }
+                current.operations.append(.navigation(operation))
+                Self.trimOperations(&current.operations)
             }
             pending[pending.count - 1] = current
             return .coalesced
@@ -189,8 +201,20 @@ struct SwitcherRouteOwnership {
         }
         pending.append(Pending(token: generation,
                                route: route,
-                               sourceGeneration: released?.token ?? activation?.generation))
+                               sourceGeneration: released?.token ?? activation?.generation,
+                               shiftBackNavigationHeld: route.reversed
+                                   && route.shortcut.shiftIsNavigationModifier))
         return .accepted(generation)
+    }
+
+    private static func trimOperations(_ operations: inout [SwitcherPendingOperation]) {
+        while operations.count > Self.pendingOperationLimit {
+            let removable = operations.firstIndex { operation in
+                operation != .letterAction(.pinSearch)
+            }
+            guard let removable else { return }
+            operations.remove(at: removable)
+        }
     }
 
     /// Resolves the pending-to-active handoff under the route lock. The first
@@ -212,27 +236,73 @@ struct SwitcherRouteOwnership {
     /// Records the release even while main is still building the session.
     /// The next press is then a new gesture instead of another navigation step.
     @discardableResult
-    mutating func observePendingModifierFlags(_ flags: CGEventFlags) -> Bool {
-        guard let index = pending.lastIndex(where: { !$0.gestureEnded }),
-              !pending[index].route.shortcut.requiredModifiersHeld(in: flags)
-        else { return false }
-        pending[index].gestureEnded = true
-        return true
+    mutating func observePendingModifierFlags(
+        _ flags: CGEventFlags
+    ) -> SwitcherPendingFlagsObservation {
+        guard let index = pending.lastIndex(where: { !$0.gestureEnded }) else { return .none }
+        let shiftHeld = flags.contains(.maskShift)
+        let requiredModifiersHeld = pending[index].route.shortcut.requiredModifiersHeld(in: flags)
+        var consumesEvent = false
+        if requiredModifiersHeld,
+           !pending[index].searchPinRequested,
+           SwitcherSupport.shouldNavigateBackwardOnShiftPress(
+            shiftIsNavigationModifier: pending[index].route.shortcut.shiftIsNavigationModifier,
+            wasShiftHeld: pending[index].shiftBackNavigationHeld,
+            isShiftHeld: shiftHeld
+        ) {
+            pending[index].operations.append(.navigation(SwitcherPendingNavigation(
+                command: pending[index].route.scope,
+                delta: -1,
+                wrapping: true
+            )))
+            Self.trimOperations(&pending[index].operations)
+            consumesEvent = true
+        }
+        pending[index].shiftBackNavigationHeld = shiftHeld
+        var gestureEnded = false
+        if !pending[index].searchPinRequested, !requiredModifiersHeld {
+            pending[index].gestureEnded = true
+            gestureEnded = true
+        }
+        return SwitcherPendingFlagsObservation(gestureEnded: gestureEnded,
+                                                consumesEvent: consumesEvent)
     }
 
     /// Keeps commands owned by a live accepted gesture from leaking into
     /// the foreground app while its Accessibility enumeration is in progress.
     /// A late event can only join the pending generation that still exists.
-    mutating func queuePendingKeyInput(_ input: SwitcherPendingKeyInput) -> Bool {
+    mutating func queuePendingKeyInput(_ input: SwitcherPendingKeyInput,
+                                       letterAction: SwitcherLetterAction?,
+                                       deletesSearchCharacter: Bool) -> Bool {
         guard tapLive, !capturing, !sessionActive,
               let index = pending.lastIndex(where: { !$0.gestureEnded })
         else { return false }
-        pending[index].keyInputs.append(input)
-        if pending[index].keyInputs.count > Self.pendingKeyInputLimit {
-            pending[index].keyInputs.removeFirst(
-                pending[index].keyInputs.count - Self.pendingKeyInputLimit
-            )
+
+        if deletesSearchCharacter {
+            pending[index].searchLength = max(0, pending[index].searchLength - 1)
+            pending[index].operations.append(.keyCommand(input))
+        } else if pending[index].searchLength > 0 || pending[index].searchPinRequested {
+            if let text = input.text, !text.isEmpty {
+                pending[index].searchLength = min(64,
+                                                  pending[index].searchLength + text.count)
+                pending[index].operations.append(.searchText(text))
+            } else {
+                pending[index].operations.append(.keyCommand(input))
+            }
+        } else if let letterAction {
+            if !input.isRepeat {
+                if letterAction == .pinSearch {
+                    pending[index].searchPinRequested = true
+                }
+                pending[index].operations.append(.letterAction(letterAction))
+            }
+        } else if let text = input.text, !text.isEmpty {
+            pending[index].searchLength = min(64, text.count)
+            pending[index].operations.append(.searchText(text))
+        } else {
+            pending[index].operations.append(.keyCommand(input))
         }
+        Self.trimOperations(&pending[index].operations)
         return true
     }
 
@@ -254,8 +324,8 @@ struct SwitcherRouteOwnership {
     /// Atomically hands routing to the new session after its first selection
     /// exists. Repeats can keep accumulating until this exact transition.
     mutating func beginSession(_ token: UInt64) -> (route: SwitcherInitialRoute,
-                                                    navigation: [SwitcherPendingNavigation],
-                                                    keyInputs: [SwitcherPendingKeyInput],
+                                                    operations: [SwitcherPendingOperation],
+                                                    searchPinned: Bool,
                                                     gestureEnded: Bool,
                                                     token: UInt64)? {
         guard tapLive, !capturing, !sessionActive,
@@ -263,11 +333,13 @@ struct SwitcherRouteOwnership {
         else { return nil }
         let accepted = pending.removeFirst()
         if !accepted.gestureEnded {
-            active = Active(token: accepted.token, shortcut: accepted.route.shortcut)
+            active = Active(token: accepted.token,
+                            shortcut: accepted.route.shortcut,
+                            searchPinned: accepted.searchPinRequested)
         } else {
             released = Released(token: accepted.token)
         }
-        return (accepted.route, accepted.navigation, accepted.keyInputs,
+        return (accepted.route, accepted.operations, accepted.searchPinRequested,
                 accepted.gestureEnded, accepted.token)
     }
 
@@ -744,17 +816,17 @@ enum SwitcherSupport {
     /// needed for same-app switches because they do not activate a new app or
     /// change the WindowServer fingerprint used to validate the cache.
     static func cachedItemsAfterSwitch(_ items: [SwitcherItem],
-                                       target: CGWindowID?,
-                                       previous: CGWindowID?) -> [SwitcherItem] {
+                                       targetID: String?,
+                                       previousID: String?) -> [SwitcherItem] {
         var ordered = items
-        func promote(_ windowID: CGWindowID?) {
-            guard let windowID,
-                  let index = ordered.firstIndex(where: { $0.windowID == windowID })
+        func promote(_ itemID: String?) {
+            guard let itemID,
+                  let index = ordered.firstIndex(where: { $0.id == itemID })
             else { return }
             ordered.insert(ordered.remove(at: index), at: 0)
         }
-        promote(previous)
-        promote(target)
+        promote(previousID)
+        promote(targetID)
         return ordered
     }
 

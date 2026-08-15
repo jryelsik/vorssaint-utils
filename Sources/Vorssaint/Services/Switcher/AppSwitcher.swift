@@ -81,6 +81,7 @@ final class AppSwitcher: ObservableObject {
     private var routeOwnership = SwitcherRouteOwnership()
     private var routeShortcut = GlobalShortcut.switcherDefault
     private var routeWindowShortcut = GlobalShortcut.switcherWindowDefault
+    private var routeSearchPinEnabled = false
 
     /// Enumeration touches every regular app through Accessibility. A cheap
     /// WindowServer fingerprint proves this warmed result still describes the
@@ -148,9 +149,13 @@ final class AppSwitcher: ObservableObject {
                                             fallback: .switcherDefault)
         let windowShortcut = GlobalShortcut.saved(for: DefaultsKey.switcherWindowShortcut,
                                                   fallback: .switcherWindowDefault)
+        let searchPinEnabled = UserDefaults.standard.bool(
+            forKey: DefaultsKey.switcherSearchPinEnabled
+        )
         routeLock.withLock {
             routeShortcut = shortcut
             routeWindowShortcut = windowShortcut
+            routeSearchPinEnabled = searchPinEnabled
         }
         let enabled = AppFeature.switcher.isAvailable
             && UserDefaults.standard.bool(forKey: DefaultsKey.switcherEnabled)
@@ -393,15 +398,17 @@ final class AppSwitcher: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
-        let (shortcut, windowShortcut, routingShortcut, capturing, releasedSession) = routeLock.withLock {
-            if type == .flagsChanged {
-                routeOwnership.observePendingModifierFlags(event.flags)
-            }
+        let (shortcut, windowShortcut, routingShortcut, pinSearchEnabled,
+             capturing, pendingFlagsConsumed, releasedSession) = routeLock.withLock {
+            let pendingFlagsObservation = type == .flagsChanged
+                ? routeOwnership.observePendingModifierFlags(event.flags)
+                : .none
             let released = type == .flagsChanged
                 ? routeOwnership.releaseActiveSession(for: event.flags)
                 : nil
             return (routeShortcut, routeWindowShortcut, routeOwnership.routingShortcut,
-                    routeOwnership.capturing, released)
+                    routeSearchPinEnabled, routeOwnership.capturing,
+                    pendingFlagsObservation.consumesEvent, released)
         }
         // A shortcut field in Settings has the keyboard: hand every key
         // straight through so the user can record this feature's own
@@ -413,6 +420,7 @@ final class AppSwitcher: ObservableObject {
             }
             return Unmanaged.passUnretained(event)
         }
+        if pendingFlagsConsumed { return nil }
         var activeToken = routeLock.withLock { routeOwnership.activeToken }
         var routeIsActive = activeToken != nil
         if !routeIsActive {
@@ -441,7 +449,18 @@ final class AppSwitcher: ObservableObject {
                     text: printableSearchText(from: event),
                     isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
                 )
-                if routeLock.withLock({ routeOwnership.queuePendingKeyInput(pendingInput) }) {
+                let letterAction = SwitcherSupport.letterAction(
+                    typedCharacter: pendingInput.text,
+                    keyCode: pendingInput.keyCode,
+                    pinSearchEnabled: pinSearchEnabled
+                )
+                if routeLock.withLock({
+                    routeOwnership.queuePendingKeyInput(
+                        pendingInput,
+                        letterAction: letterAction,
+                        deletesSearchCharacter: pendingInput.keyCode == KeyCode.delete
+                    )
+                }) {
                     return nil
                 }
                 // Session ownership may have changed after the first snapshot.
@@ -811,13 +830,11 @@ final class AppSwitcher: ObservableObject {
                                                        items: windows)
 
         let list = orderedForSession(windows, currentID: source?.id)
-        let pendingNavigation: [SwitcherPendingNavigation]
-        let pendingKeyInputs: [SwitcherPendingKeyInput]
+        let pendingOperations: [SwitcherPendingOperation]
         let pendingGestureEnded: Bool
         guard let accepted = routeLock.withLock({ routeOwnership.beginSession(pendingRouteToken) })
         else { return false }
-        pendingNavigation = accepted.navigation
-        pendingKeyInputs = accepted.keyInputs
+        pendingOperations = accepted.operations
         pendingGestureEnded = accepted.gestureEnded
         sessionGeneration = accepted.token
 
@@ -861,8 +878,7 @@ final class AppSwitcher: ObservableObject {
         sessionShortcut = shortcut
         sessionScope = scope
         shiftBackNavigationHeld = reversed && shortcut.shiftIsNavigationModifier
-        applyPendingNavigation(pendingNavigation)
-        applyPendingKeyInputs(pendingKeyInputs, expectedSessionToken: accepted.token)
+        applyPendingOperations(pendingOperations, expectedSessionToken: accepted.token)
 
         // Escape, Enter, W, or Q can end the session while queued input is
         // replayed. Do not start preview or panel work for that old token.
@@ -1082,12 +1098,14 @@ final class AppSwitcher: ObservableObject {
     /// Records a switch straight away instead of waiting for the window server
     /// and Accessibility to report it: a flick of the shortcut is faster than
     /// either, and it is exactly the moment the toggle has to be right.
-    private func recordUse(_ activated: SwitcherItem, previous: CGWindowID?) {
-        WindowUseTracker.shared.recordSwitch(to: activated.windowID, from: previous)
+    private func recordUse(_ activated: SwitcherItem,
+                           previousWindowID: CGWindowID?,
+                           previousItemID: String?) {
+        WindowUseTracker.shared.recordSwitch(to: activated.windowID, from: previousWindowID)
         cachedWindowItems = SwitcherSupport.cachedItemsAfterSwitch(
             cachedWindowItems,
-            target: activated.windowID,
-            previous: previous
+            targetID: activated.id,
+            previousID: previousItemID
         )
     }
 
@@ -1214,60 +1232,61 @@ final class AppSwitcher: ObservableObject {
                                                                           delta: delta)
     }
 
-    private func applyPendingNavigation(_ operations: [SwitcherPendingNavigation]) {
+    private func applyPendingNavigation(_ operation: SwitcherPendingNavigation) {
+        if sessionScope == .frontmostApp || operation.command == .allApps {
+            advanceSelection(by: operation.delta, wrapping: operation.wrapping)
+            return
+        }
+        let step = operation.delta < 0 ? -1 : 1
+        for _ in 0..<abs(operation.delta) {
+            advanceWindowInSelectedApp(by: step)
+        }
+    }
+
+    private func applyPendingOperations(_ operations: [SwitcherPendingOperation],
+                                        expectedSessionToken: UInt64) {
         for operation in operations {
-            if sessionScope == .frontmostApp || operation.command == .allApps {
-                advanceSelection(by: operation.delta, wrapping: operation.wrapping)
-                continue
-            }
-            let step = operation.delta < 0 ? -1 : 1
-            for _ in 0..<abs(operation.delta) {
-                advanceWindowInSelectedApp(by: step)
+            guard sessionGeneration == expectedSessionToken, sessionActive else { return }
+            switch operation {
+            case let .navigation(navigation):
+                applyPendingNavigation(navigation)
+            case let .keyCommand(input):
+                applyPendingKeyCommand(input)
+            case let .letterAction(action):
+                applyPendingLetterAction(action)
+            case let .searchText(text):
+                appendSearchText(text)
             }
         }
     }
 
-    private func applyPendingKeyInputs(_ inputs: [SwitcherPendingKeyInput],
-                                       expectedSessionToken: UInt64) {
-        for input in inputs {
-            guard sessionGeneration == expectedSessionToken, sessionActive else { return }
-            switch input.keyCode {
-            case KeyCode.rightArrow:
-                advanceSelection(by: 1)
-            case KeyCode.leftArrow:
-                advanceSelection(by: -1)
-            case KeyCode.downArrow:
-                moveSelection(by: grid.columns)
-            case KeyCode.upArrow:
-                moveSelection(by: -grid.columns)
-            case KeyCode.delete:
-                removeLastSearchCharacter()
-            case KeyCode.escape:
-                cancelSession()
-            case KeyCode.enter:
-                commitSession()
-            default:
-                if searchQuery.isEmpty, !isSearchPinned,
-                   let action = SwitcherSupport.letterAction(
-                    typedCharacter: input.text,
-                    keyCode: input.keyCode,
-                    pinSearchEnabled: searchPinEnabled
-                   ) {
-                    guard !input.isRepeat else { continue }
-                    switch action {
-                    case .closeWindow: closeSelectedWindow()
-                    case .quitApp: quitSelectedApp()
-                    case .pinSearch:
-                        if routeLock.withLock({
-                            routeOwnership.pinActiveSession(expectedToken: expectedSessionToken)
-                        }) {
-                            isSearchPinned = true
-                        }
-                    }
-                } else if let text = input.text {
-                    appendSearchText(text)
-                }
-            }
+    private func applyPendingKeyCommand(_ input: SwitcherPendingKeyInput) {
+        switch input.keyCode {
+        case KeyCode.rightArrow:
+            advanceSelection(by: 1)
+        case KeyCode.leftArrow:
+            advanceSelection(by: -1)
+        case KeyCode.downArrow:
+            moveSelection(by: grid.columns)
+        case KeyCode.upArrow:
+            moveSelection(by: -grid.columns)
+        case KeyCode.delete:
+            removeLastSearchCharacter()
+        case KeyCode.escape:
+            cancelSession()
+        case KeyCode.enter:
+            commitSession()
+        default:
+            break
+        }
+    }
+
+    private func applyPendingLetterAction(_ action: SwitcherLetterAction) {
+        switch action {
+        case .closeWindow: closeSelectedWindow()
+        case .quitApp: quitSelectedApp()
+        case .pinSearch:
+            isSearchPinned = true
         }
     }
 
@@ -1417,7 +1436,9 @@ final class AppSwitcher: ObservableObject {
                 return
             }
             clearSessionState(preservingRouteLifecycle: true)
-            recordUse(selection, previous: previousWindowID)
+            recordUse(selection,
+                      previousWindowID: previousWindowID,
+                      previousItemID: source?.itemID)
             WindowActivator.activate(selection,
                                      sourceWasFullscreen: source?.isFullscreen ?? false,
                                      sourcePID: source?.pid,
