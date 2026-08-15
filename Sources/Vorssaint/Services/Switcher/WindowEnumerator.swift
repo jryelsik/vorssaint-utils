@@ -104,7 +104,7 @@ enum WindowEnumerator {
         WindowUseTracker.shared.reconcile(existingWindows: Set(windowIDs),
                                           frontToBack: frontToBack,
                                           running: Set(runningApps.map(\.processIdentifier)))
-        let ownWindowTitlePairs: [(CGWindowID, String)] = NSApp.windows.compactMap { window in
+        let ownWindowTitlePairs: [(CGWindowID, String)] = (NSApp?.windows ?? []).compactMap { window in
             guard window.styleMask.contains(.titled), window.canBecomeKey,
                   window.isVisible || window.isMiniaturized else { return nil }
             let title = window.title.isEmpty ? AppInfo.name : window.title
@@ -133,7 +133,9 @@ enum WindowEnumerator {
                 ($0, SpaceWindowBridge.spaces(of: $0))
             }),
             excludedWindowIDs: Set(windowIDs.filter(SpaceWindowBridge.isExcludedFromWindowCycle)),
-            accessibilityGranted: Permissions.shared.accessibility,
+            accessibilityGranted: NSApp == nil
+                ? AXIsProcessTrusted()
+                : Permissions.shared.accessibility,
             windowlessApps: windowlessApps,
             appRules: appRules,
             groupByApp: groupByApp,
