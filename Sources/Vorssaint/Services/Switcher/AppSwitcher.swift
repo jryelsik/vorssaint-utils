@@ -422,7 +422,7 @@ final class AppSwitcher: ObservableObject {
         }
         if pendingFlagsConsumed { return nil }
         let initialActiveState = routeLock.withLock {
-            (routeOwnership.activeToken, routeOwnership.activeTerminalPending)
+            (routeOwnership.routableActiveToken, routeOwnership.activeTerminalPending)
         }
         if initialActiveState.1, type == .flagsChanged {
             return Unmanaged.passUnretained(event)
@@ -484,7 +484,7 @@ final class AppSwitcher: ObservableObject {
                 }
                 // Session ownership may have changed after the first snapshot.
                 // Recheck before deciding that an unrelated key passes through.
-                activeToken = routeLock.withLock { routeOwnership.activeToken }
+                activeToken = routeLock.withLock { routeOwnership.routableActiveToken }
                 routeIsActive = activeToken != nil
                 if !routeIsActive { return Unmanaged.passUnretained(event) }
                 return routeActiveEvent(type: type, event: event,
@@ -511,7 +511,7 @@ final class AppSwitcher: ObservableObject {
             }
             switch decision {
             case .activeSession:
-                let token = routeLock.withLock { routeOwnership.activeToken }
+                let token = routeLock.withLock { routeOwnership.routableActiveToken }
                 return routeActiveEvent(type: type, event: event,
                                         expectedSessionToken: token)
             case let .accepted(token):

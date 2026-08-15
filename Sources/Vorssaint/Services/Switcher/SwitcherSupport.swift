@@ -170,8 +170,11 @@ struct SwitcherRouteOwnership {
     var hasSessionLifecycle: Bool { active != nil || released != nil }
     var activeToken: UInt64? { active?.token }
     var activeTerminalPending: Bool { active?.terminal != nil }
+    var routableActiveToken: UInt64? {
+        active?.terminal == nil ? active?.token : nil
+    }
     var routingShortcut: GlobalShortcut? {
-        active?.shortcut ?? pending.last(where: { !$0.gestureEnded })?.route.shortcut
+        pending.last(where: { !$0.gestureEnded })?.route.shortcut ?? active?.shortcut
     }
 
     mutating func setTapLive(_ live: Bool) {
@@ -186,7 +189,9 @@ struct SwitcherRouteOwnership {
 
     mutating func accept(_ route: SwitcherInitialRoute,
                          isRepeat: Bool = false) -> SwitcherPendingRouteAcceptance {
-        guard tapLive, !capturing, !sessionActive else { return .rejected }
+        guard tapLive, !capturing,
+              (!sessionActive || active?.terminal != nil)
+        else { return .rejected }
         if var current = pending.last, !current.gestureEnded {
             let operation = SwitcherPendingNavigation(command: route.scope,
                                                       delta: route.reversed ? -1 : 1,
@@ -213,9 +218,12 @@ struct SwitcherRouteOwnership {
            let evicted = pending.firstIndex(where: { !$0.claimed }) {
             pending.remove(at: evicted)
         }
+        let sourceGeneration = active?.terminal == .commit
+            ? active?.token
+            : released?.token ?? activation?.generation
         pending.append(Pending(token: generation,
                                route: route,
-                               sourceGeneration: released?.token ?? activation?.generation,
+                               sourceGeneration: sourceGeneration,
                                shiftBackNavigationHeld: route.reversed
                                    && route.shortcut.shiftIsNavigationModifier))
         return .accepted(generation)
@@ -238,7 +246,7 @@ struct SwitcherRouteOwnership {
                                      isRepeat: Bool = false,
                                      allowingNewRoute: Bool) -> SwitcherMatchedRouteDecision {
         guard tapLive, !capturing else { return .rejected }
-        if sessionActive { return .activeSession }
+        if routableActiveToken != nil { return .activeSession }
         if pending.isEmpty, !allowingNewRoute { return .needsAccessibility }
         switch accept(route, isRepeat: isRepeat) {
         case let .accepted(token): return .accepted(token)
@@ -289,7 +297,8 @@ struct SwitcherRouteOwnership {
                                        letterAction: SwitcherLetterAction?,
                                        deletesSearchCharacter: Bool,
                                        terminal: SwitcherPendingTerminal? = nil) -> Bool {
-        guard tapLive, !capturing, !sessionActive,
+        guard tapLive, !capturing,
+              (!sessionActive || active?.terminal != nil),
               let index = pending.lastIndex(where: { !$0.gestureEnded })
         else { return false }
 
@@ -331,7 +340,8 @@ struct SwitcherRouteOwnership {
     mutating func queuePendingWindowShortcutAsSearch(
         _ input: SwitcherPendingKeyInput
     ) -> Bool {
-        guard tapLive, !capturing, !sessionActive,
+        guard tapLive, !capturing,
+              (!sessionActive || active?.terminal != nil),
               let index = pending.lastIndex(where: { !$0.gestureEnded }),
               pending[index].route.scope == .allApps,
               pending[index].searchLength > 0

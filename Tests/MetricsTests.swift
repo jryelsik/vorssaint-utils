@@ -2237,6 +2237,97 @@ struct MetricsTests {
                && pendingEscapeBoundary.claim(afterEscapeGestureToken)?.route == expectedAppsRoute,
                "App Switcher ignores modifier release, cancels Escape, and preserves the later gesture")
 
+        var activeEscapeBoundary = SwitcherRouteOwnership()
+        activeEscapeBoundary.setTapLive(true)
+        guard case let .accepted(activeEscapeToken) = activeEscapeBoundary.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns Escape before testing its active routing boundary")
+            return
+        }
+        _ = activeEscapeBoundary.queuePendingKeyInput(pendingEscape,
+                                                       letterAction: nil,
+                                                       deletesSearchCharacter: false,
+                                                       terminal: .cancel)
+        _ = activeEscapeBoundary.claim(activeEscapeToken)
+        _ = activeEscapeBoundary.beginSession(activeEscapeToken)
+        expect(activeEscapeBoundary.routableActiveToken == nil
+               && activeEscapeBoundary.releaseActiveSession(
+                expectedToken: activeEscapeBoundary.routableActiveToken ?? 0
+               ) == nil
+               && activeEscapeBoundary.activeToken == activeEscapeToken
+               && !activeEscapeBoundary.queuePendingKeyInput(pendingEnter,
+                                                              letterAction: nil,
+                                                              deletesSearchCharacter: false,
+                                                              terminal: .commit)
+               && !activeEscapeBoundary.queuePendingKeyInput(pendingW,
+                                                              letterAction: .closeWindow,
+                                                              deletesSearchCharacter: false),
+               "App Switcher does not route later Enter or unrelated input into active Escape")
+        guard case let .accepted(afterActiveEscapeToken) = activeEscapeBoundary.decideMatchedRoute(
+            expectedAppsRoute,
+            allowingNewRoute: true
+        ) else {
+            expect(false, "App Switcher accepts an Apps gesture behind active Escape")
+            return
+        }
+        expect(activeEscapeBoundary.routingShortcut == expectedAppsRoute.shortcut
+               && activeEscapeBoundary.queuePendingKeyInput(pendingA,
+                                                             letterAction: nil,
+                                                             deletesSearchCharacter: false)
+               && activeEscapeBoundary.claim(afterActiveEscapeToken) == nil,
+               "App Switcher attaches later input to the gesture behind active Escape")
+        expect(activeEscapeBoundary.cancelActiveSession(expectedToken: activeEscapeToken)
+               && activeEscapeBoundary.claim(afterActiveEscapeToken)?.route == expectedAppsRoute
+               && activeEscapeBoundary.beginSession(afterActiveEscapeToken)?.operations
+               == [.searchText("a")]
+               && !activeEscapeBoundary.cancelActiveSession(expectedToken: activeEscapeToken)
+               && activeEscapeBoundary.activeToken == afterActiveEscapeToken,
+               "App Switcher starts the preserved gesture only after exact Escape cancellation")
+
+        var activeEnterBoundary = SwitcherRouteOwnership()
+        activeEnterBoundary.setTapLive(true)
+        guard case let .accepted(activeEnterToken) = activeEnterBoundary.accept(expectedAppsRoute)
+        else {
+            expect(false, "App Switcher owns Enter before testing its active routing boundary")
+            return
+        }
+        _ = activeEnterBoundary.queuePendingKeyInput(pendingEnter,
+                                                      letterAction: nil,
+                                                      deletesSearchCharacter: false,
+                                                      terminal: .commit)
+        _ = activeEnterBoundary.claim(activeEnterToken)
+        _ = activeEnterBoundary.beginSession(activeEnterToken)
+        guard case let .accepted(afterActiveEnterToken) = activeEnterBoundary.decideMatchedRoute(
+            expectedWindowRoute,
+            allowingNewRoute: true
+        ) else {
+            expect(false, "App Switcher accepts a Windows gesture behind active Enter")
+            return
+        }
+        expect(activeEnterBoundary.routingShortcut == expectedWindowRoute.shortcut
+               && activeEnterBoundary.queuePendingKeyInput(pendingW,
+                                                            letterAction: .closeWindow,
+                                                            deletesSearchCharacter: false)
+               && activeEnterBoundary.claim(afterActiveEnterToken) == nil,
+               "App Switcher preserves Windows routing and input behind active Enter")
+        let terminalActivationSource = SwitcherRouteSource(
+            .appOnly(appName: "Terminal Target", pid: 515)
+        )
+        expect(activeEnterBoundary.releaseActiveSession(expectedToken: activeEnterToken)
+               == activeEnterToken
+               && activeEnterBoundary.claim(afterActiveEnterToken) == nil
+               && activeEnterBoundary.claimReleasedSession(activeEnterToken)
+               && activeEnterBoundary.publishActivationSource(terminalActivationSource,
+                                                                generation: activeEnterToken)
+               && activeEnterBoundary.claim(afterActiveEnterToken)?.source
+               == terminalActivationSource,
+               "App Switcher waits for Enter activation before handing off the queued source")
+        expect(activeEnterBoundary.beginSession(afterActiveEnterToken)?.operations
+               == [.letterAction(.closeWindow)]
+               && activeEnterBoundary.releaseActiveSession(expectedToken: activeEnterToken) == nil
+               && activeEnterBoundary.activeToken == afterActiveEnterToken,
+               "App Switcher keeps stale Enter replay isolated from its replacement session")
+
         var boundedTerminal = SwitcherRouteOwnership()
         boundedTerminal.setTapLive(true)
         guard case let .accepted(boundedTerminalToken) = boundedTerminal.accept(expectedAppsRoute)
