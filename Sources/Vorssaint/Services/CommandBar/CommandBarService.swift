@@ -1268,7 +1268,8 @@ final class CommandBarService: ObservableObject {
                 })
                 actions.append(RowAction(id: "restartApp",
                                          title: String(format: bar.restartAppFormat, app.name),
-                                         symbolName: "arrow.clockwise") { [weak self] in
+                                         symbolName: "arrow.clockwise",
+                                         shortcut: "⌘R") { [weak self] in
                     self?.restart(running, at: app.url)
                 })
                 actions.append(RowAction(id: "forceQuitApp",
@@ -2089,6 +2090,21 @@ final class CommandBarService: ObservableObject {
                    let app = self.installedApp(for: entry),
                    let running = self.runningApplication(for: app) {
                     self.quit(running)
+                    return nil
+                }
+                return nil
+            }
+            if event.modifierFlags.contains(.command), Int(event.keyCode) == kVK_ANSI_R {
+                if case .actions = self.mode,
+                   let restartAction = self.actionRows.first(where: { $0.id == "restartApp" }) {
+                    self.runAction(restartAction)
+                    return nil
+                }
+                if case .search = self.mode,
+                   let entry = self.selectedEntry,
+                   let app = self.installedApp(for: entry),
+                   let running = self.runningApplication(for: app) {
+                    self.restart(running, at: app.url)
                     return nil
                 }
                 return nil

@@ -713,6 +713,12 @@ struct CommandBarView: View {
                 Text("Quit")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
+                Text("⌘R")
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.tertiary)
+                Text("Restart")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
                     .padding(.trailing, 4)
             }
             if service.canOpenActions {
