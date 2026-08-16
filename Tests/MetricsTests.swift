@@ -15675,6 +15675,14 @@ struct MetricsTests {
         expect(VideoDownloaderThumbnailURLPolicy.isPublicAddress("2001:4860:4860::8888")
                 && !VideoDownloaderThumbnailURLPolicy.isPublicAddress("::1"),
                "thumbnail peer validation distinguishes public and loopback IPv6")
+
+        let callbackID = UUID()
+        expect(VideoDownloaderCallbackGate.accepts(callbackID, currentID: callbackID),
+               "workflow callback gate accepts the current generation")
+        expect(!VideoDownloaderCallbackGate.accepts(UUID(), currentID: callbackID),
+               "workflow callback gate rejects a stale generation")
+        expect(!VideoDownloaderCallbackGate.accepts(callbackID, currentID: nil),
+               "workflow callback gate rejects a missing generation")
         expect(VideoDownloaderTimeoutPolicy.default.download > VideoDownloaderTimeoutPolicy.default.postProcessing
                 && VideoDownloaderTimeoutPolicy.default.homebrewSetup > 0,
                "downloader timeout defaults bound every long-running operation")
@@ -15992,6 +16000,13 @@ struct MetricsTests {
                 && cookieArgs.contains("edge")
                 && !cookieArgs.contains("--no-cookies"),
                "inspection passes the chosen browser session to yt-dlp when cookies are enabled")
+        expect(VideoDownloaderQualityFallback.detect(requested: .height(720), actualHeight: 480)
+                == VideoDownloaderQualityFallback(requestedHeight: 720, actualHeight: 480),
+               "quality fallback records a lower selected height")
+        expect(VideoDownloaderQualityFallback.detect(requested: .height(720), actualHeight: 720) == nil,
+               "quality fallback stays quiet at the requested height")
+        expect(VideoDownloaderQualityFallback.detect(requested: .best, actualHeight: 480) == nil,
+               "quality fallback does not annotate an uncapped best download")
         expect(VideoDownloaderTerminalSetup.shellQuote("brew") == "brew"
                 && VideoDownloaderTerminalSetup.shellQuote("a'b").hasPrefix("'"),
                "Terminal setup quotes shell metacharacters while leaving simple paths readable")
@@ -16335,6 +16350,11 @@ struct MetricsTests {
         let boundedTail = boundedLineDecoder.finish()
         expect(decodedLines == ["first", "second"] && emptyTail == nil && boundedTail == "3456",
                "line decoding normalizes CRLF, flushes complete records, and caps an unterminated line")
+
+        var completionOnlyAggregate = VideoDownloaderProgressAggregator(expectsSeparateMediaTransfers: true)
+        let forcedCompletion = completionOnlyAggregate.complete()
+        expect(forcedCompletion?.fraction == 1 && completionOnlyAggregate.complete() == nil,
+               "progress aggregation can force a single terminal completion without duplicates")
 
         let symlinkStage = try! VideoDownloaderFileSupport.makeStagingDirectory(in: downloaderTemp)
         let symlinkTarget = downloaderTemp.appendingPathComponent("symlink-target.mp4")

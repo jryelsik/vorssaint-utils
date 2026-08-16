@@ -37,6 +37,10 @@ This one feeds window titles and thumbnails in the switcher and Dock Preview. If
 
 This one powers per app volume and output routing in the mixer. If the mixer says it needs permission, open System Settings, Privacy and Security, Screen and System Audio Recording, and switch Vorssaint on. Audio is processed only for the local mixer.
 
+### Files and Folders
+
+This one powers saving finished media in Video Downloader into your chosen folder. If saving a download fails with a permissions error, open System Settings, Privacy and Security, Files and Folders, and make sure Vorssaint is allowed for that folder.
+
 ### Automation
 
 Finder cut and paste, the uninstaller and Homebrew's Terminal handoff may ask for Automation. If a Finder move or Terminal handoff does nothing after a denial, open System Settings, Privacy and Security, Automation, and allow Vorssaint for the app it needs to control.

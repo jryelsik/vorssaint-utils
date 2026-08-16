@@ -99,21 +99,13 @@ You can review or change every grant in System Settings, under Privacy and Secur
 
 ## Files & Folders
 
-**Why it comes up.** macOS protects user-selected folders from apps that have
-not previously been granted access. Vorssaint asks for this permission only
-when a feature that needs a folder is enabled or used.
+**Why it comes up.** macOS asks before an app can read or write files in user folders like Downloads, Desktop or Documents.
 
-**What uses it.** The Video Downloader saves a finished MP4, MKV or M4A only in the
-destination folder you explicitly choose. WhatsApp download cleanup and the
-experimental organizer use it only when you ask them to inspect or change a
-folder. The downloader does not scan Downloads or another folder at launch.
+**What uses it.** The Video Downloader, to save finished video and audio files into your chosen destination folder. WhatsApp download cleanup and the experimental organizer use it only when you ask them to inspect or change a folder. The downloader never scans your folders at launch or in the background.
 
-**If you say no.** The feature stays unavailable until you choose Allow or
-grant access later in System Settings, under Privacy and Security, Files and
-Folders. The rest of Vorssaint keeps working.
+**If you say no.** The Video Downloader cannot save completed media to that folder, and organizer actions will not go through. You can grant access later in System Settings, under Privacy and Security, Files and Folders. The rest of Vorssaint keeps working.
 
-**Optional.** Yes. Vorssaint does not request broad disk access for the
-downloader; the folder grant is scoped by macOS to the location you choose.
+**Optional.** Yes. Access is scoped by macOS only to the destination folder you choose.
 
 ## Full Disk Access
 
