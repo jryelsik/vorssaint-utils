@@ -22,7 +22,7 @@ struct VideoDownloaderStrings {
     var paste: String { strings.videoDownloaderPaste }
     var inspecting: String { strings.videoDownloaderInspecting }
     var video: String { strings.videoDownloaderVideo }
-    var mp3: String { strings.videoDownloaderMp3 }
+    var audio: String { strings.videoDownloaderAudio }
     var quality: String { strings.videoDownloaderQuality }
     var outputOptions: String {
         switch language {
@@ -116,7 +116,7 @@ struct VideoDownloaderStrings {
     }
     var checkingTools: String { strings.videoDownloaderCheckingTools }
     var downloadVideo: String { strings.videoDownloaderDownloadVideo }
-    var downloadMP3: String { strings.videoDownloaderDownloadMP3 }
+    var downloadAudio: String { strings.videoDownloaderDownloadAudio }
     var downloading: String { strings.videoDownloaderDownloading }
     var percentFormat: String { strings.videoDownloaderPercentFormat }
     var speedFormat: String { strings.videoDownloaderSpeedFormat }
@@ -254,7 +254,7 @@ struct VideoDownloaderStrings {
             strings.videoDownloaderPaste,
             strings.videoDownloaderInspecting,
             strings.videoDownloaderVideo,
-            strings.videoDownloaderMp3,
+            strings.videoDownloaderAudio,
             strings.videoDownloaderQuality,
             outputOptions,
             strings.videoDownloaderHeightFormat,
@@ -288,7 +288,7 @@ struct VideoDownloaderStrings {
             checkDependencies,
             strings.videoDownloaderCheckingTools,
             strings.videoDownloaderDownloadVideo,
-            strings.videoDownloaderDownloadMP3,
+            strings.videoDownloaderDownloadAudio,
             strings.videoDownloaderDownloading,
             strings.videoDownloaderPercentFormat,
             strings.videoDownloaderSpeedFormat,

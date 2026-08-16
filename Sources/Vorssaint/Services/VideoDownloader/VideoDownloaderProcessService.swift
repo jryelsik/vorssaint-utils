@@ -485,9 +485,7 @@ final class VideoDownloaderProcessService: VideoDownloaderProcessServicing {
             "http error 403", "http error 429", "403 forbidden", "429 too many requests",
             "too many requests", "http error 500", "http error 502", "http error 503",
             "http error 504", "temporarily unavailable", "temporary failure",
-            "connection reset", "timed out",
-            "unable to extract universal data for rehydration",
-            "unable to extract player response", "failed to extract player response",
+            "connection reset", "timed out", "unable to extract", "failed to extract",
         ]
         return transientSignals.contains(where: normalized.contains)
     }

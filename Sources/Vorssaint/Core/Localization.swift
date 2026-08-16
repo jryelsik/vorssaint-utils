@@ -1053,7 +1053,7 @@ struct Strings {
     let videoDownloaderPaste: String
     let videoDownloaderInspecting: String
     let videoDownloaderVideo: String
-    let videoDownloaderMp3: String
+    let videoDownloaderAudio: String
     let videoDownloaderQuality: String
     let videoDownloaderHeightFormat: String
     let videoDownloaderQualityFallbackFormat: String
@@ -1085,7 +1085,7 @@ struct Strings {
     let videoDownloaderTerminalSetupNote: String
     let videoDownloaderCheckingTools: String
     let videoDownloaderDownloadVideo: String
-    let videoDownloaderDownloadMP3: String
+    let videoDownloaderDownloadAudio: String
     let videoDownloaderDownloading: String
     let videoDownloaderPercentFormat: String
     let videoDownloaderSpeedFormat: String
@@ -2032,13 +2032,13 @@ extension Strings {
         uninstallerHomebrewPackageFormat: "%@ também será removido do Homebrew.",
         videoDownloaderPageTitle: "Baixador de vídeos",
         videoDownloaderHubDescription: "Baixe um vídeo ou MP3 com opções de qualidade e legenda",
-        videoDownloaderPanelCaption: "Salve um link de mídia como MP4/MKV ou MP3",
+        videoDownloaderPanelCaption: "Salve um link de mídia como MP4/MKV ou M4A",
         videoDownloaderUrlPlaceholder: "Cole um link de mídia HTTP ou HTTPS",
         videoDownloaderUrlHelp: "A URL só é analisada quando é válida. Ela não é salva nem colocada nos argumentos do processo.",
         videoDownloaderPaste: "Colar",
         videoDownloaderInspecting: "Analisando mídia…",
         videoDownloaderVideo: "Vídeo",
-        videoDownloaderMp3: "MP3",
+        videoDownloaderAudio: "Áudio",
         videoDownloaderQuality: "Qualidade do vídeo",
         videoDownloaderHeightFormat: "%dp",
         videoDownloaderQualityFallbackFormat: "%dp não estava disponível; %dp foi selecionado.",
@@ -2049,11 +2049,11 @@ extension Strings {
         videoDownloaderDestination: "Pasta de download",
         videoDownloaderChoose: "Escolher…",
         videoDownloaderShowInPanel: "Mostrar no painel do menu",
-        videoDownloaderSettingsCaption: "Os downloads ficam numa área temporária privada e só o MP4/MKV ou MP3 final vai para sua pasta.",
+        videoDownloaderSettingsCaption: "Os downloads ficam numa área temporária privada e só o MP4/MKV ou M4A final vai para sua pasta.",
         videoDownloaderUsageNotice: "Baixe somente conteúdo que você tem permissão para usar.",
         videoDownloaderDefaultLocation: "Local padrão dos downloads",
         videoDownloaderResetDownloads: "Redefinir para Downloads",
-        videoDownloaderEmbedThumbnail: "Incorporar miniatura no MP4/MKV / capa no MP3",
+        videoDownloaderEmbedThumbnail: "Incorporar miniatura no MP4/MKV / capa no M4A",
         videoDownloaderEmbedMetadata: "Incorporar metadados",
         videoDownloaderEmbedChapters: "Incorporar capítulos no MP4/MKV",
         videoDownloaderUseCookies: "Usar cookies do navegador",
@@ -2070,8 +2070,8 @@ extension Strings {
         videoDownloaderTerminalSetupNote: "O Terminal abrirá a configuração oficial do Homebrew e poderá pedir confirmação ou senha; depois instalará yt-dlp, FFmpeg (incluindo ffprobe) e Deno.",
         videoDownloaderCheckingTools: "Verificando ferramentas…",
         videoDownloaderDownloadVideo: "Baixar vídeo",
-        videoDownloaderDownloadMP3: "Baixar MP3",
-        videoDownloaderDownloading: "Baixando",
+        videoDownloaderDownloadAudio: "Baixar áudio",
+        videoDownloaderDownloading: "Baixando…",
         videoDownloaderPercentFormat: "%.0f%%",
         videoDownloaderSpeedFormat: "%@/s",
         videoDownloaderEtaFormat: "Tempo restante %@",
@@ -2880,7 +2880,7 @@ extension Strings {
         cleaningOverlayUnlock: "Unlock",
         cleaningOverlayMouseHint: "Your mouse and trackpad still work",
         cleaningNeedsAxTitle: "Accessibility needed",
-        cleaningNeedsAxBody: "To lock the keyboard safely, Vorssaint needs Accessibility permission. Grant it in System Settings and try again.",
+        cleaningNeedsAxBody: "To lock the keyboard safely, Vorssaint needs Accessibility permission. Enable it in System Settings and try again.",
 
         tabSupport: "Support",
         shortcutsPageCaption: "Edit every global shortcut from the features installed on this Mac. Inactive shortcuts stay saved but do not run.",
@@ -3017,14 +3017,14 @@ extension Strings {
         switcherShowShortcutHintsCaption: "Shows the app and window shortcuts below the icons.",
         uninstallerHomebrewPackageFormat: "%@ will also be removed from Homebrew.",
         videoDownloaderPageTitle: "Video Downloader",
-        videoDownloaderHubDescription: "Download a video or MP3 with quality and subtitle choices",
-        videoDownloaderPanelCaption: "Save a media link as MP4/MKV or MP3",
+        videoDownloaderHubDescription: "Download a video or audio track with quality and subtitle choices",
+        videoDownloaderPanelCaption: "Save a media link as MP4/MKV or M4A",
         videoDownloaderUrlPlaceholder: "Paste an HTTP or HTTPS media link",
         videoDownloaderUrlHelp: "The URL is inspected only after it is valid. It is not saved or put in process arguments.",
         videoDownloaderPaste: "Paste",
         videoDownloaderInspecting: "Inspecting media…",
         videoDownloaderVideo: "Video",
-        videoDownloaderMp3: "MP3",
+        videoDownloaderAudio: "Audio",
         videoDownloaderQuality: "Video quality",
         videoDownloaderHeightFormat: "%dp",
         videoDownloaderQualityFallbackFormat: "%dp was unavailable; %dp was selected instead.",
@@ -3035,11 +3035,11 @@ extension Strings {
         videoDownloaderDestination: "Download folder",
         videoDownloaderChoose: "Choose…",
         videoDownloaderShowInPanel: "Show in menu panel",
-        videoDownloaderSettingsCaption: "Downloads are staged privately and only the finished MP4/MKV or MP3 is placed in your folder.",
+        videoDownloaderSettingsCaption: "Downloads are staged privately and only the finished MP4/MKV or M4A is placed in your folder.",
         videoDownloaderUsageNotice: "Only download content you have permission to use.",
         videoDownloaderDefaultLocation: "Default download location",
         videoDownloaderResetDownloads: "Reset to Downloads",
-        videoDownloaderEmbedThumbnail: "Embed thumbnail in MP4/MKV / cover art in MP3",
+        videoDownloaderEmbedThumbnail: "Embed thumbnail in MP4/MKV / cover art in M4A",
         videoDownloaderEmbedMetadata: "Embed metadata",
         videoDownloaderEmbedChapters: "Embed chapters in MP4/MKV",
         videoDownloaderUseCookies: "Use browser cookies",
@@ -3055,9 +3055,9 @@ extension Strings {
         videoDownloaderBrewSetupNote: "Homebrew installs only the missing yt-dlp, FFmpeg (including ffprobe), and Deno tools.",
         videoDownloaderTerminalSetupNote: "Terminal will open for the official Homebrew setup and may ask for confirmation or your password, then installs yt-dlp, FFmpeg (including ffprobe), and Deno.",
         videoDownloaderCheckingTools: "Checking downloader tools…",
-        videoDownloaderDownloadVideo: "Download Video",
-        videoDownloaderDownloadMP3: "Download MP3",
-        videoDownloaderDownloading: "Downloading",
+        videoDownloaderDownloadVideo: "Download video",
+        videoDownloaderDownloadAudio: "Download audio",
+        videoDownloaderDownloading: "Downloading…",
         videoDownloaderPercentFormat: "%.0f%%",
         videoDownloaderSpeedFormat: "%@/s",
         videoDownloaderEtaFormat: "ETA %@",
@@ -3066,7 +3066,7 @@ extension Strings {
         videoDownloaderCancelling: "Cancelling…",
         videoDownloaderComplete: "Download complete",
         videoDownloaderDownloadAnother: "Download Another",
-        videoDownloaderRevealFinder: "Reveal in Finder",
+        videoDownloaderRevealFinder: "Show in Finder",
         videoDownloaderRetry: "Retry",
         videoDownloaderCancelled: "Download cancelled",
         videoDownloaderFailureTitle: "Could not finish the download",

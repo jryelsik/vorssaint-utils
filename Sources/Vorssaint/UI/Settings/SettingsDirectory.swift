@@ -106,7 +106,7 @@ enum SettingsDirectory {
                     icon: "arrow.down.circle",
                     keywords: [FeatureStrings.videoDownloader(language).panelCaption,
                                FeatureStrings.videoDownloader(language).downloadVideo,
-                               FeatureStrings.videoDownloader(language).downloadMP3,
+                               FeatureStrings.videoDownloader(language).downloadAudio,
                                FeatureStrings.videoDownloader(language).subtitles,
                                FeatureStrings.videoDownloader(language).defaultLocation]
                 ),

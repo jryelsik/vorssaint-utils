@@ -6,10 +6,10 @@ import Foundation
 
 enum VideoDownloaderOutputMode: String {
     case video
-    case mp3
+    case audio
 
     var allowedExtensions: Set<String> {
-        self == .mp3 ? ["mp3"] : ["mp4", "mkv"]
+        self == .audio ? ["m4a"] : ["mp4", "mkv"]
     }
 }
 
@@ -728,22 +728,30 @@ final class VideoDownloaderImageFetcher: NSObject, URLSessionDataDelegate, URLSe
     static func fetchData(url: URL,
                           timeout: TimeInterval,
                           isCancelled: () -> Bool) -> Data? {
+        guard !isCancelled() else { return nil }
         let fetcher = VideoDownloaderImageFetcher(url: url, timeout: timeout)
-        let semaphore = DispatchSemaphore(value: 0)
+        let condition = NSCondition()
+        var completed = false
         var result: Data?
+
         fetcher.start { data in
+            condition.lock()
             result = data
-            semaphore.signal()
+            completed = true
+            condition.broadcast()
+            condition.unlock()
         }
 
         let deadline = Date().addingTimeInterval(max(timeout, 0.1))
-        while semaphore.wait(timeout: .now() + 0.05) != .success {
-            if isCancelled() || Date() >= deadline {
-                fetcher.cancel()
-                return nil
-            }
+        condition.lock()
+        while !completed && !isCancelled() && Date() < deadline {
+            condition.wait(until: Date().addingTimeInterval(0.05))
         }
-        return result
+        let outcome = isCancelled() ? nil : result
+        condition.unlock()
+
+        if outcome == nil { fetcher.cancel() }
+        return outcome
     }
 
     private func finish(_ result: Data?) {
@@ -924,18 +932,19 @@ enum VideoDownloaderInspectionParser {
             throw VideoDownloaderFailure.malformedInspection
         }
 
+        let duration = positiveDouble(json["duration"])
         let heights = Array(Set(videoFormats.compactMap { positiveInt($0["height"]) })).sorted(by: >)
         let audioFormats = usableFormats.filter {
             codecAvailability($0["acodec"], extensionValue: $0["audio_ext"]) == .available
         }
-        let targetAudioSize = preferredAudioStreamSize(in: audioFormats)
+        let targetAudioSize = preferredAudioStreamSize(in: audioFormats, duration: duration)
         let topLevelSize = int64(json["filesize"]) ?? int64(json["filesize_approx"])
         let estimatedAudioSize = targetAudioSize ?? (audioAvailability == .available ? topLevelSize : nil)
 
         var estimatedSizes: [Int: Int64] = [:]
         for height in heights {
             let heightFormats = usableFormats.filter { positiveInt($0["height"]) == height }
-            if let size = preferredVideoStreamSize(in: heightFormats, audioSize: targetAudioSize) {
+            if let size = preferredVideoStreamSize(in: heightFormats, audioSize: targetAudioSize, duration: duration) {
                 estimatedSizes[height] = size
             }
         }
@@ -950,7 +959,7 @@ enum VideoDownloaderInspectionParser {
         return VideoDownloaderMedia(
             title: title,
             uploader: string(json["uploader"]) ?? string(json["channel"]),
-            duration: VideoDownloaderNumericPolicy.timeInterval(positiveDouble(json["duration"])),
+            duration: VideoDownloaderNumericPolicy.timeInterval(duration),
             thumbnailURL: bestThumbnail(in: json),
             heights: heights,
             estimatedSizes: estimatedSizes,
@@ -971,53 +980,145 @@ enum VideoDownloaderInspectionParser {
         return nil
     }
 
-    private static func formatSize(_ format: [String: Any]) -> Int64? {
-        int64(format["filesize"]) ?? int64(format["filesize_approx"])
+    private static func formatSize(_ format: [String: Any], duration: Double? = nil) -> Int64? {
+        if let exact = int64(format["filesize"]) {
+            return exact
+        }
+        if let approx = int64(format["filesize_approx"]) {
+            return approx
+        }
+        if let duration, duration > 0 {
+            let bitrate = positiveDouble(format["tbr"])
+                ?? positiveDouble(format["vbr"])
+                ?? positiveDouble(format["abr"])
+            if let bitrate, bitrate > 0 {
+                // yt-dlp bitrate is in kbit/s (1000 bits/s)
+                let bytes = (bitrate * 1000.0 / 8.0) * duration
+                if bytes > 0, bytes.isFinite {
+                    return Int64(bytes)
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func vcodecScore(_ codec: String?) -> Double {
+        guard let codec = codec?.lowercased() else { return 0 }
+        if codec.starts(with: "av01") || codec.starts(with: "av1") { return 9.0 }
+        if codec.starts(with: "vp09.02") || codec.starts(with: "vp9.2") { return 8.5 }
+        if codec.starts(with: "vp09") || codec.starts(with: "vp9") { return 8.0 }
+        if codec.starts(with: "h265") || codec.starts(with: "hevc") || codec.starts(with: "hev1") || codec.starts(with: "hvc1") { return 7.0 }
+        if codec.starts(with: "h264") || codec.starts(with: "avc1") || codec.starts(with: "avc") { return 6.0 }
+        if codec != "none" { return 5.0 }
+        return 0
+    }
+
+    private static func acodecScore(_ codec: String?) -> Double {
+        guard let codec = codec?.lowercased() else { return 0 }
+        if codec.starts(with: "flac") || codec.starts(with: "alac") || codec.starts(with: "wav") { return 10.0 }
+        if codec.starts(with: "opus") { return 8.0 }
+        if codec.starts(with: "vorbis") { return 7.0 }
+        if codec.starts(with: "mp4a") || codec.starts(with: "aac") { return 6.0 }
+        if codec.starts(with: "mp3") { return 5.0 }
+        if codec.starts(with: "eac3") || codec.starts(with: "ac3") || codec.starts(with: "ac-3") { return 4.0 }
+        if codec != "none" { return 3.0 }
+        return 0
+    }
+
+    private static func videoRank(_ format: [String: Any], duration: Double?) -> (Double, Double, Double) {
+        let vscore = vcodecScore(string(format["vcodec"]))
+        let fps = positiveDouble(format["fps"]) ?? 0
+        let bitrateOrSize = positiveDouble(format["vbr"])
+            ?? positiveDouble(format["tbr"])
+            ?? (formatSize(format, duration: duration).map(Double.init) ?? 0)
+        return (vscore, fps, bitrateOrSize)
+    }
+
+    private static func isVideoRankBetter(_ lhs: [String: Any], than rhs: [String: Any], duration: Double?) -> Bool {
+        let l = videoRank(lhs, duration: duration)
+        let r = videoRank(rhs, duration: duration)
+        if l.0 != r.0 { return l.0 < r.0 }
+        if l.1 != r.1 { return l.1 < r.1 }
+        return l.2 < r.2
+    }
+
+    private static func audioRank(_ format: [String: Any], duration: Double?) -> (Double, Double, Double) {
+        let ascore = acodecScore(string(format["acodec"]))
+        let bitrateOrSize = positiveDouble(format["abr"])
+            ?? positiveDouble(format["tbr"])
+            ?? (formatSize(format, duration: duration).map(Double.init) ?? 0)
+        let asr = positiveDouble(format["asr"]) ?? 0
+        return (ascore, bitrateOrSize, asr)
+    }
+
+    private static func isAudioRankBetter(_ lhs: [String: Any], than rhs: [String: Any], duration: Double?) -> Bool {
+        let l = audioRank(lhs, duration: duration)
+        let r = audioRank(rhs, duration: duration)
+        if l.0 != r.0 { return l.0 < r.0 }
+        if l.1 != r.1 { return l.1 < r.1 }
+        return l.2 < r.2
     }
 
     /// Mirrors yt-dlp's ba[ext=m4a]/ba audio selector to pick the expected standard audio track size.
-    private static func preferredAudioStreamSize(in formats: [[String: Any]]) -> Int64? {
+    private static func preferredAudioStreamSize(in formats: [[String: Any]], duration: Double?) -> Int64? {
         let m4aFormats = formats.filter {
             let ext = (string($0["ext"]) ?? string($0["audio_ext"]))?.lowercased()
-            return ext == "m4a" && formatSize($0) != nil
+            return ext == "m4a" && codecAvailability($0["acodec"], extensionValue: $0["audio_ext"]) == .available
         }
-        let pool = m4aFormats.isEmpty ? formats : m4aFormats
-        return pool.compactMap(formatSize).first
+        let pool = m4aFormats.isEmpty ? formats.filter {
+            codecAvailability($0["acodec"], extensionValue: $0["audio_ext"]) == .available
+        } : m4aFormats
+        guard let best = pool.max(by: { isAudioRankBetter($0, than: $1, duration: duration) }) else { return nil }
+        return formatSize(best, duration: duration)
     }
 
     /// Mirrors yt-dlp's bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b selector hierarchy.
-    private static func preferredVideoStreamSize(in formats: [[String: Any]], audioSize: Int64?) -> Int64? {
-        let mp4Combined = formats.filter {
-            codecAvailability($0["vcodec"], extensionValue: $0["video_ext"]) == .available
-                && codecAvailability($0["acodec"], extensionValue: $0["audio_ext"]) == .available
-                && (string($0["ext"]) ?? string($0["video_ext"]))?.lowercased() == "mp4"
-        }
-        if let combinedSize = mp4Combined.compactMap(formatSize).first {
-            return combinedSize
-        }
-
+    private static func preferredVideoStreamSize(in formats: [[String: Any]],
+                                                 audioSize: Int64?,
+                                                 duration: Double?) -> Int64? {
+        // Tier 1: bv*[ext=mp4] + ba[ext=m4a]
         let mp4VideoOnly = formats.filter {
             codecAvailability($0["vcodec"], extensionValue: $0["video_ext"]) == .available
                 && codecAvailability($0["acodec"], extensionValue: $0["audio_ext"]) == .unavailable
                 && (string($0["ext"]) ?? string($0["video_ext"]))?.lowercased() == "mp4"
         }
-        if let videoSize = mp4VideoOnly.compactMap(formatSize).first {
+        if let bestVideo = mp4VideoOnly.max(by: { isVideoRankBetter($0, than: $1, duration: duration) }),
+           let videoSize = formatSize(bestVideo, duration: duration) {
             return videoSize + (audioSize ?? 0)
         }
 
+        // Tier 2: b[ext=mp4] (combined)
+        let mp4Combined = formats.filter {
+            codecAvailability($0["vcodec"], extensionValue: $0["video_ext"]) == .available
+                && codecAvailability($0["acodec"], extensionValue: $0["audio_ext"]) == .available
+                && (string($0["ext"]) ?? string($0["video_ext"]))?.lowercased() == "mp4"
+        }
+        if let bestCombined = mp4Combined.max(by: { isVideoRankBetter($0, than: $1, duration: duration) }),
+           let combinedSize = formatSize(bestCombined, duration: duration) {
+            return combinedSize
+        }
+
+        // Tier 3: bv* + ba (any extension, e.g. webm/mkv)
         let anyVideoOnly = formats.filter {
             codecAvailability($0["vcodec"], extensionValue: $0["video_ext"]) == .available
                 && codecAvailability($0["acodec"], extensionValue: $0["audio_ext"]) == .unavailable
         }
-        if let videoSize = anyVideoOnly.compactMap(formatSize).first {
+        if let bestVideo = anyVideoOnly.max(by: { isVideoRankBetter($0, than: $1, duration: duration) }),
+           let videoSize = formatSize(bestVideo, duration: duration) {
             return videoSize + (audioSize ?? 0)
         }
 
+        // Tier 4: b (any combined)
         let anyCombined = formats.filter {
             codecAvailability($0["vcodec"], extensionValue: $0["video_ext"]) == .available
                 && codecAvailability($0["acodec"], extensionValue: $0["audio_ext"]) == .available
         }
-        return anyCombined.compactMap(formatSize).first
+        if let bestCombined = anyCombined.max(by: { isVideoRankBetter($0, than: $1, duration: duration) }),
+           let combinedSize = formatSize(bestCombined, duration: duration) {
+            return combinedSize
+        }
+
+        return nil
     }
 
     private static func tracks(_ value: Any?,
@@ -1436,6 +1537,7 @@ enum VideoDownloaderCommandBuilder {
             "--no-playlist", "--playlist-items", "1",
             "--match-filters", nonLiveMatchFilter,
             "--ffmpeg-location", ffmpegPath,
+            "--concurrent-fragments", "4",
             "--newline", "--progress", "--progress-delta", "0.15",
             // yt-dlp outputs bare `NA` for missing template values, which breaks JSON parsing.
             // Setting the placeholder to `null` keeps progress updates valid JSON.
@@ -1461,8 +1563,8 @@ enum VideoDownloaderCommandBuilder {
             arguments += ["--format", videoFormatSelector(request.quality),
                           "--merge-output-format", "mp4/mkv",
                           "--remux-video", "mp4>mp4/mov>mp4/mkv"]
-        case .mp3:
-            arguments += ["--format", "ba/b", "--extract-audio", "--audio-format", "mp3",
+        case .audio:
+            arguments += ["--format", "ba[ext=m4a]/ba", "--extract-audio", "--audio-format", "m4a",
                           "--audio-quality", "0"]
         }
 
@@ -1548,11 +1650,10 @@ enum VideoDownloaderCommandBuilder {
                               "-map_metadata", "0", "-map_chapters", "0", "-c", "copy",
                               "-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic"]
             }
-        case .mp3:
+        case .audio:
             arguments += ["-i", artwork.path, "-map", "0", "-map", "1:v:0",
                           "-map_metadata", "0", "-map_chapters", "0", "-c", "copy",
-                          "-c:v:0", "mjpeg", "-disposition:v:0", "attached_pic",
-                          "-id3v2_version", "3"]
+                          "-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic"]
         }
         arguments.append(output.path)
         return VideoDownloaderToolCommand(executable: ffmpegPath, arguments: arguments)
@@ -1606,7 +1707,7 @@ struct VideoDownloaderEmbeddedDataInspection: Equatable {
 enum VideoDownloaderMediaContainer: String, Equatable {
     case mp4
     case mkv
-    case mp3
+    case m4a
 
     var pathExtension: String { rawValue }
 }
@@ -1632,7 +1733,7 @@ enum VideoDownloaderEmbeddedDataParser {
         }
         let hasChapters = !(root["chapters"] as? [[String: Any]] ?? []).isEmpty
         let format = root["format"] as? [String: Any]
-        let container = mediaContainer(formatName: string(format?["format_name"]))
+        let container = mediaContainer(formatName: string(format?["format_name"]), hasVideo: hasVideo)
         let tags = normalizedTags(format?["tags"])
         let metadataKeys = ["title", "artist", "album", "description", "comment"]
         return VideoDownloaderEmbeddedDataInspection(
@@ -1646,11 +1747,12 @@ enum VideoDownloaderEmbeddedDataParser {
         )
     }
 
-    private static func mediaContainer(formatName: String?) -> VideoDownloaderMediaContainer? {
+    private static func mediaContainer(formatName: String?, hasVideo: Bool) -> VideoDownloaderMediaContainer? {
         let names = Set((formatName ?? "").split(separator: ",").map(String.init))
-        if names.contains("mp4") { return .mp4 }
         if names.contains("matroska") { return .mkv }
-        if names.contains("mp3") { return .mp3 }
+        if names.contains("mp4") || names.contains("mov") || names.contains("m4a") || names.contains("ipod") {
+            return hasVideo ? .mp4 : .m4a
+        }
         return nil
     }
 
@@ -1688,7 +1790,7 @@ enum VideoDownloaderEmbeddedDataVerifier {
             if request.media.audioAvailability == .available, !inspection.hasAudio {
                 return .fileSafety
             }
-        } else if !inspection.hasAudio || inspection.container != .mp3 {
+        } else if !inspection.hasAudio || inspection.hasVideo || (inspection.container != .m4a && inspection.container != .mp4) {
             return .fileSafety
         }
         return nil
@@ -1822,63 +1924,37 @@ enum VideoDownloaderProtocolParser {
         return nil
     }
 
-    /// Extract each JSON field individually so a single malformed metric from yt-dlp doesn't drop the entire progress event.
     private static func progressFields(_ payload: String) -> [String: Any]? {
         if let data = payload.data(using: .utf8),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             return object
         }
         let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.first == "{", trimmed.last == "}" else { return nil }
-        let keys = ["downloaded", "total", "percent", "speed", "eta", "elapsed",
-                    "fragment_index", "fragment_count", "extension", "format_id",
-                    "vcodec", "acodec", "video_ext", "audio_ext"]
-        var result: [String: Any] = [:]
-        var recognizedField = false
-        for key in keys {
-            guard let raw = rawScalar(named: key, in: trimmed) else { continue }
-            recognizedField = true
-            guard let data = "[\(raw)]".data(using: .utf8),
-                  let array = try? JSONSerialization.jsonObject(with: data) as? [Any],
-                  let value = array.first else { continue }
-            result[key] = value
-        }
-        return recognizedField ? result : nil
-    }
+        guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}") else { return nil }
 
-    private static func rawScalar(named key: String, in object: String) -> Substring? {
-        guard let keyRange = object.range(of: "\"\(key)\"") else { return nil }
-        var cursor = keyRange.upperBound
-        while cursor < object.endIndex, object[cursor].isWhitespace {
-            cursor = object.index(after: cursor)
-        }
-        guard cursor < object.endIndex, object[cursor] == ":" else { return nil }
-        cursor = object.index(after: cursor)
-        while cursor < object.endIndex, object[cursor].isWhitespace {
-            cursor = object.index(after: cursor)
-        }
-        let valueStart = cursor
-        if cursor < object.endIndex, object[cursor] == "\"" {
-            cursor = object.index(after: cursor)
-            var escaped = false
-            while cursor < object.endIndex {
-                let character = object[cursor]
-                cursor = object.index(after: cursor)
-                if escaped {
-                    escaped = false
-                } else if character == "\\" {
-                    escaped = true
-                } else if character == "\"" {
-                    return object[valueStart..<cursor]
-                }
+        let pattern = #"\"([a-zA-Z0-9_]+)\"\s*:\s*(\"[^\"]*\"|[^,}\s]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let nsString = trimmed as NSString
+        let matches = regex.matches(in: trimmed, range: NSRange(location: 0, length: nsString.length))
+        guard !matches.isEmpty else { return nil }
+
+        var result: [String: Any] = [:]
+        for match in matches where match.numberOfRanges == 3 {
+            let key = nsString.substring(with: match.range(at: 1))
+            let rawValue = nsString.substring(with: match.range(at: 2))
+            if rawValue == "null" || rawValue == "NA" || rawValue == "N/A" || rawValue == "None" {
+                result[key] = NSNull()
+            } else if let data = "[\(rawValue)]".data(using: .utf8),
+                      let array = try? JSONSerialization.jsonObject(with: data) as? [Any],
+                      let value = array.first {
+                result[key] = value
+            } else if rawValue.hasPrefix("\""), rawValue.hasSuffix("\""), rawValue.count >= 2 {
+                result[key] = String(rawValue.dropFirst().dropLast())
+            } else {
+                result[key] = rawValue
             }
-            return nil
         }
-        while cursor < object.endIndex, object[cursor] != ",", object[cursor] != "}" {
-            cursor = object.index(after: cursor)
-        }
-        let raw = object[valueStart..<cursor]
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : raw
+        return result.isEmpty ? nil : result
     }
 
     private static func isAuxiliaryProgressExtension(_ fileExtension: String?) -> Bool {

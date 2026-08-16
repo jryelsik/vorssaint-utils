@@ -208,7 +208,7 @@ final class VideoDownloaderWorkflow: ObservableObject {
               let media, !sourceText.isEmpty else { return false }
         switch mode {
         case .video: return media.canAttemptVideo
-        case .mp3: return media.canAttemptAudio
+        case .audio: return media.canAttemptAudio
         }
     }
 
@@ -354,10 +354,10 @@ final class VideoDownloaderWorkflow: ObservableObject {
         // remain visible for discovery without starting broken transfers.
         let previousMode = mode
         mode = value
-        if previousMode == .video, value == .mp3 {
+        if previousMode == .video, value == .audio {
             videoSubtitlesPreference = subtitlesEnabled
             subtitlesEnabled = false
-        } else if previousMode == .mp3, value == .video {
+        } else if previousMode == .audio, value == .video {
             let preferred = videoSubtitlesPreference ?? false
             subtitlesEnabled = preferred && subtitle != nil
         }

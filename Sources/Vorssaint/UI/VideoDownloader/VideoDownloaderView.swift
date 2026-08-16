@@ -384,7 +384,7 @@ struct VideoDownloaderWorkspaceView: View {
     }
 
     private func requestControls(_ media: VideoDownloaderMedia) -> some View {
-        let modeLabel = "\(text.video) / \(text.mp3)"
+        let modeLabel = "\(text.video) / \(text.audio)"
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "slider.horizontal.3")
@@ -400,7 +400,7 @@ struct VideoDownloaderWorkspaceView: View {
                        workflow.setMode(value)
                    })) {
                 Text(text.video).tag(VideoDownloaderOutputMode.video)
-                Text(text.mp3).tag(VideoDownloaderOutputMode.mp3)
+                Text(text.audio).tag(VideoDownloaderOutputMode.audio)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -432,9 +432,7 @@ struct VideoDownloaderWorkspaceView: View {
                         .disabled(controlsLocked || !media.canAttemptVideo)
                     }
                 }
-            }
 
-            if workflow.mode == .video {
                 let subtitleOptions = media.subtitleOptions
                 HStack(spacing: 8) {
                     Toggle(isOn: Binding(get: {
@@ -550,7 +548,7 @@ struct VideoDownloaderWorkspaceView: View {
         Button {
             workflow.startDownload()
         } label: {
-            Label(workflow.mode == .video ? text.downloadVideo : text.downloadMP3,
+            Label(workflow.mode == .video ? text.downloadVideo : text.downloadAudio,
                   systemImage: "arrow.down.circle.fill")
                 .frame(maxWidth: .infinity)
         }
@@ -579,6 +577,8 @@ struct VideoDownloaderWorkspaceView: View {
                 Text(activeStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                 Spacer(minLength: 0)
                 if workflow.phase != .cancelling {
                     Button(text.cancel) { workflow.cancelActiveOperation() }
@@ -592,7 +592,7 @@ struct VideoDownloaderWorkspaceView: View {
     private var activeStatus: String {
         if workflow.phase == .cancelling { return text.cancelling }
         if workflow.phase == .finalizing { return text.finalizing }
-        var parts = [text.downloading]
+        var parts: [String] = []
         if let fraction = workflow.progress.fraction {
             parts.append(String(format: text.percentFormat, fraction * 100))
         }
@@ -602,7 +602,7 @@ struct VideoDownloaderWorkspaceView: View {
         if let eta = workflow.progress.etaSeconds {
             parts.append(String(format: text.etaFormat, durationText(eta)))
         }
-        return parts.joined(separator: " · ")
+        return parts.isEmpty ? text.downloading : parts.joined(separator: " · ")
     }
 
     private var completionView: some View {
@@ -727,7 +727,7 @@ struct VideoDownloaderWorkspaceView: View {
             case .best: targetHeight = media.heights.first
             }
             bytes = targetHeight.flatMap { media.estimatedSizes[$0] }
-        case .mp3:
+        case .audio:
             bytes = media.estimatedAudioSize
         }
         return VideoDownloaderByteCountFormatter.formattedApproximateSize(bytes)

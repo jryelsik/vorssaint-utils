@@ -13604,7 +13604,7 @@ struct MetricsTests {
         // test-videos.co.uk's Big Buck Bunny sample has this exact shape:
         // yt-dlp knows the container has video, reports audio_ext=none, but
         // leaves both codec labels null. The old parser treated both streams
-        // as unknown and incorrectly allowed MP3.
+        // as unknown and incorrectly allowed audio.
         let directVideoOnlyFixture: [String: Any] = [
             "_type": "video",
             "title": "Big_Buck_Bunny_360_10s_1MB",
@@ -13644,6 +13644,28 @@ struct MetricsTests {
                 && videoOnly?.audioAvailability == .unavailable
                 && videoOnly?.canAttemptVideo == true && videoOnly?.canAttemptAudio == false,
                "inspection still distinguishes an explicitly silent video from an unknown direct format")
+
+        let multiCodecFixture: [String: Any] = [
+            "_type": "video",
+            "title": "Multi-codec media",
+            "duration": 100.0,
+            "availability": "public",
+            "is_live": false,
+            "formats": [
+                ["url": "https://cdn.example.com/v1080-h264", "ext": "mp4", "vcodec": "avc1.640028",
+                 "acodec": "none", "height": 1080, "fps": 30, "filesize": 400_000_000, "vbr": 4200],
+                ["url": "https://cdn.example.com/v1080-av1", "ext": "mp4", "vcodec": "av01.0.08M.08",
+                 "acodec": "none", "height": 1080, "fps": 30, "filesize": 235_000_000, "vbr": 1700],
+                ["url": "https://cdn.example.com/a48", "ext": "m4a", "audio_ext": "m4a",
+                 "vcodec": "none", "acodec": "mp4a.40.5", "abr": 48, "filesize": 5_000_000],
+                ["url": "https://cdn.example.com/a128", "ext": "m4a", "audio_ext": "m4a",
+                 "vcodec": "none", "acodec": "mp4a.40.2", "abr": 128, "filesize": 15_000_000],
+            ],
+        ]
+        let multiCodecInspected = try? VideoDownloaderInspectionParser.parse(downloaderJSON(multiCodecFixture))
+        expect(multiCodecInspected?.estimatedSizes[1080] == 250_000_000
+                && multiCodecInspected?.estimatedAudioSize == 15_000_000,
+               "format estimation accurately mirrors yt-dlp's codec priority and best-bitrate audio selection")
         expect(inspectionFailure(Data("not json".utf8)) == .malformedInspection,
                "inspection rejects malformed JSON")
         expect(inspectionFailure(Data(repeating: 0x20, count: 33), maximumBytes: 32) == .inspectionTooLarge,
@@ -13712,6 +13734,12 @@ struct MetricsTests {
         } ?? false
         expect(hasNullPlaceholder,
                "download progress makes every missing template value valid JSON null")
+        let concurrentFragmentsIndex = videoArguments.firstIndex(of: "--concurrent-fragments")
+        let hasConcurrentFragments = concurrentFragmentsIndex.map { index in
+            videoArguments.indices.contains(index + 1) && videoArguments[index + 1] == "4"
+        } ?? false
+        expect(hasConcurrentFragments,
+               "video arguments specify 4 concurrent fragment downloads for stream acceleration")
         expect(videoArguments.contains(where: { $0.contains("\"extension\":%(info.ext)j") }),
                "download progress identifies auxiliary subtitle and thumbnail transfers")
         expect(videoArguments.contains(where: {
@@ -13799,19 +13827,19 @@ struct MetricsTests {
                 && !inspectionCookieArguments.contains("--no-cookies"),
                "inspection reuses the same authenticated browser session")
 
-        let mp3Request = VideoDownloaderRequest(source: requestSource, mode: .mp3, quality: .best,
+        let audioRequest = VideoDownloaderRequest(source: requestSource, mode: .audio, quality: .best,
                                                 subtitle: nil, destination: URL(fileURLWithPath: "/tmp"),
                                                 media: inspectedMedia, options: requestOptions)
-        let mp3Arguments = VideoDownloaderCommandBuilder.download(ytDlpPath: "yt-dlp", ffmpegPath: "ffmpeg",
-                                                                  staging: commandStaging, request: mp3Request).arguments
-        expect(mp3Arguments.contains("ba/b") && mp3Arguments.contains("--extract-audio")
-                && mp3Arguments.contains("--audio-format") && mp3Arguments.contains("mp3")
-                && mp3Arguments.contains("--audio-quality") && mp3Arguments.contains("0"),
-               "MP3 arguments select best audio and highest-quality MP3 export")
-        expect(!mp3Arguments.contains("--write-subs") && !mp3Arguments.contains("--write-auto-subs")
-                && mp3Arguments.contains("--no-write-subs") && mp3Arguments.contains("--no-write-auto-subs")
-                && mp3Arguments.contains("--no-embed-chapters"),
-               "MP3 media arguments do not request captions")
+        let audioArguments = VideoDownloaderCommandBuilder.download(ytDlpPath: "yt-dlp", ffmpegPath: "ffmpeg",
+                                                                  staging: commandStaging, request: audioRequest).arguments
+        expect(audioArguments.contains("ba[ext=m4a]/ba") && audioArguments.contains("--extract-audio")
+                && audioArguments.contains("--audio-format") && audioArguments.contains("m4a")
+                && audioArguments.contains("--audio-quality") && audioArguments.contains("0"),
+               "Audio arguments select best audio and highest-quality M4A export")
+        expect(!audioArguments.contains("--write-subs") && !audioArguments.contains("--write-auto-subs")
+                && audioArguments.contains("--no-write-subs") && audioArguments.contains("--no-write-auto-subs")
+                && audioArguments.contains("--no-embed-chapters"),
+               "Audio media arguments do not request captions")
         let inspectionArguments = VideoDownloaderCommandBuilder.inspection(ytDlpPath: "yt-dlp").arguments
         for required in ["--ignore-config", "--no-config-locations", "--no-plugin-dirs",
                          "--no-cookies", "--no-cookies-from-browser",
@@ -14465,8 +14493,8 @@ struct MetricsTests {
                 && malformedMediaFailure == .fileSafety,
                "mandatory ffprobe validation rejects missing required audio and malformed media")
 
-        let mp3Downloader = downloaderTemp.appendingPathComponent("mp3-yt-dlp")
-        writeExecutable(mp3Downloader, """
+        let audioDownloader = downloaderTemp.appendingPathComponent("audio-yt-dlp")
+        writeExecutable(audioDownloader, """
         #!/bin/sh
         stage=''
         skip=0
@@ -14477,44 +14505,44 @@ struct MetricsTests {
         done
         [ -n "$stage" ] || exit 20
         [ "$skip" -eq 0 ] || exit 0
-        output="$stage/AudioFixture.mp3"
+        output="$stage/AudioFixture.m4a"
         printf 'audio-media' > "$output"
         printf '\(VideoDownloaderCommandBuilder.pathPrefix)"%s"\n' "$output"
         """)
-        let validMP3FFprobe = downloaderTemp.appendingPathComponent("valid-mp3-ffprobe")
-        writeExecutable(validMP3FFprobe, """
+        let validM4AFFprobe = downloaderTemp.appendingPathComponent("valid-m4a-ffprobe")
+        writeExecutable(validM4AFFprobe, """
         #!/bin/sh
-        printf '%s\n' '{"streams":[{"codec_type":"audio"}],"chapters":[],"format":{"format_name":"mp3","tags":{}}}'
+        printf '%s\n' '{"streams":[{"codec_type":"audio"}],"chapters":[],"format":{"format_name":"mov,mp4,m4a,3gp,3g2,mj2","tags":{}}}'
         """)
-        func mp3ServiceRequest(destination: URL) -> VideoDownloaderRequest {
+        func audioServiceRequest(destination: URL) -> VideoDownloaderRequest {
             VideoDownloaderRequest(
-                source: requestSource, mode: .mp3, quality: .best, subtitle: nil,
+                source: requestSource, mode: .audio, quality: .best, subtitle: nil,
                 destination: destination, media: inspectedMedia,
                 options: VideoDownloaderEmbeddingOptions(thumbnail: false, metadata: false,
                                                          chapters: false))
         }
-        let validMP3Service = VideoDownloaderProcessService(
-            initialToolPaths: [.ytDlp: mp3Downloader.path, .ffmpeg: "/usr/bin/true",
-                               .ffprobe: validMP3FFprobe.path, .deno: "/usr/bin/true"],
+        let validAudioService = VideoDownloaderProcessService(
+            initialToolPaths: [.ytDlp: audioDownloader.path, .ffmpeg: "/usr/bin/true",
+                               .ffprobe: validM4AFFprobe.path, .deno: "/usr/bin/true"],
             mutationGate: HomebrewMutationGate())
-        var validMP3URL: URL?
-        validMP3Service.download(mp3ServiceRequest(destination: downloaderTemp), id: UUID(),
+        var validAudioURL: URL?
+        validAudioService.download(audioServiceRequest(destination: downloaderTemp), id: UUID(),
                                  progress: { _, _ in }) { _, result in
-            if case let .success(result) = result { validMP3URL = result.file }
+            if case let .success(result) = result { validAudioURL = result.file }
         }
-        let invalidMP3Service = VideoDownloaderProcessService(
-            initialToolPaths: [.ytDlp: mp3Downloader.path, .ffmpeg: "/usr/bin/true",
+        let invalidAudioService = VideoDownloaderProcessService(
+            initialToolPaths: [.ytDlp: audioDownloader.path, .ffmpeg: "/usr/bin/true",
                                .ffprobe: malformedFFprobe.path, .deno: "/usr/bin/true"],
             mutationGate: HomebrewMutationGate())
-        var invalidMP3Failure: VideoDownloaderFailure?
-        invalidMP3Service.download(mp3ServiceRequest(destination: downloaderTemp), id: UUID(),
+        var invalidAudioFailure: VideoDownloaderFailure?
+        invalidAudioService.download(audioServiceRequest(destination: downloaderTemp), id: UUID(),
                                    progress: { _, _ in }) { _, result in
-            if case let .failure(error) = result { invalidMP3Failure = error }
+            if case let .failure(error) = result { invalidAudioFailure = error }
         }
-        expect(waitUntil { validMP3URL != nil && invalidMP3Failure != nil }
-                && validMP3URL?.pathExtension == "mp3"
-                && invalidMP3Failure == .fileSafety,
-               "plain MP3 downloads are probed and malformed audio is never published")
+        expect(waitUntil { validAudioURL != nil && invalidAudioFailure != nil }
+                && validAudioURL?.pathExtension == "m4a"
+                && invalidAudioFailure == .fileSafety,
+               "plain M4A downloads are probed and malformed audio is never published")
 
         let transientRetryState = downloaderTemp.appendingPathComponent("transient-retry-state")
         let transientRetryDownloader = downloaderTemp.appendingPathComponent("transient-retry-yt-dlp")
@@ -15224,17 +15252,17 @@ struct MetricsTests {
         let subtitleDefaultOff = !subtitleModeMemoryWorkflow.subtitlesEnabled
         subtitleModeMemoryWorkflow.setSubtitlesEnabled(true)
         let subtitleExplicitOn = subtitleModeMemoryWorkflow.subtitlesEnabled
-        subtitleModeMemoryWorkflow.setMode(.mp3)
-        let subtitleDisabledForMP3 = !subtitleModeMemoryWorkflow.subtitlesEnabled
+        subtitleModeMemoryWorkflow.setMode(.audio)
+        let subtitleDisabledForAudio = !subtitleModeMemoryWorkflow.subtitlesEnabled
         subtitleModeMemoryWorkflow.setMode(.video)
-        let subtitleRestoredAfterMP3 = subtitleModeMemoryWorkflow.subtitlesEnabled
+        let subtitleRestoredAfterAudio = subtitleModeMemoryWorkflow.subtitlesEnabled
         subtitleModeMemoryWorkflow.setSubtitlesEnabled(false)
-        subtitleModeMemoryWorkflow.setMode(.mp3)
+        subtitleModeMemoryWorkflow.setMode(.audio)
         subtitleModeMemoryWorkflow.setMode(.video)
         let subtitleOffChoiceRestored = !subtitleModeMemoryWorkflow.subtitlesEnabled
-        expect(subtitleModeInspectionStarted && subtitleDefaultOff && subtitleExplicitOn && subtitleDisabledForMP3
-                && subtitleRestoredAfterMP3 && subtitleOffChoiceRestored,
-               "video subtitle preference survives MP3 mode and preserves an explicit off choice")
+        expect(subtitleModeInspectionStarted && subtitleDefaultOff && subtitleExplicitOn && subtitleDisabledForAudio
+                && subtitleRestoredAfterAudio && subtitleOffChoiceRestored,
+               "video subtitle preference survives audio mode and preserves an explicit off choice")
 
         let inspectionFallbackFake = FakeDownloaderService()
         let inspectionFallbackWorkflow = VideoDownloaderWorkflow(
@@ -15792,8 +15820,8 @@ struct MetricsTests {
                                                                 for: chapterRequest).contains(.chapters),
                "a successful MP4 without requested inspected chapters is published with a warning")
         expect(VideoDownloaderEmbeddedDataVerifier.failure(in: missingEmbeddedData,
-                                                           for: mp3Request) == .fileSafety,
-               "a mislabeled or audio-less MP3 is rejected before publication")
+                                                           for: audioRequest) == .fileSafety,
+               "a mislabeled or audio-less M4A is rejected before publication")
         let noRequestedData = VideoDownloaderRequest(
             source: requestSource, mode: .video, quality: .best, subtitle: nil,
             destination: URL(fileURLWithPath: "/tmp"), media: inspectedMedia,
@@ -16351,7 +16379,7 @@ struct MetricsTests {
         try! Data([1]).write(to: wrongExtensionMedia)
         expect((try? VideoDownloaderFileSupport.finalMedia(in: wrongExtensionStage,
                                                            reportedPath: wrongExtensionMedia.path,
-                                                           mode: .mp3)) == nil,
+                                                           mode: .audio)) == nil,
                "final media verification enforces the requested output extension")
         try? FileManager.default.removeItem(at: wrongExtensionStage)
 
@@ -16845,11 +16873,11 @@ struct MetricsTests {
         availabilityWorkflow.setMode(.video)
         let audioOnlyVideoModeSelected = availabilityWorkflow.mode == .video
             && !availabilityWorkflow.canDownload
-        availabilityWorkflow.setMode(.mp3)
-        let audioOnlyMP3ModeSelected = availabilityWorkflow.mode == .mp3
+        availabilityWorkflow.setMode(.audio)
+        let audioOnlyAudioModeSelected = availabilityWorkflow.mode == .audio
             && availabilityWorkflow.canDownload
         expect(availabilityInspectionStarted && audioOnlyVideoModeSelected
-                && audioOnlyMP3ModeSelected,
+                && audioOnlyAudioModeSelected,
                "audio-only media keeps both modes selectable and gates only the download button")
 
         let videoOnlyFallbackFake = FakeDownloaderService()
@@ -16859,9 +16887,9 @@ struct MetricsTests {
             featureAvailability: { true }, automaticallyProbe: false)
         videoOnlyFallbackWorkflow.refreshDependencies()
         videoOnlyFallbackFake.dependencyProbes[0](readyDependencies)
-        // Simulate a stale MP3 selection from a previous item before the new
+        // Simulate a stale audio selection from a previous item before the new
         // video-only inspection completes.
-        videoOnlyFallbackWorkflow.setMode(.mp3)
+        videoOnlyFallbackWorkflow.setMode(.audio)
         videoOnlyFallbackWorkflow.setSourceText(requestSource.string)
         let videoOnlyInspectionStarted = waitUntil {
             videoOnlyFallbackFake.inspections.count == 1
@@ -16872,31 +16900,31 @@ struct MetricsTests {
         }
         let videoOnlyDefaultSelected = videoOnlyFallbackWorkflow.mode == .video
             && videoOnlyFallbackWorkflow.canDownload
-        videoOnlyFallbackWorkflow.setMode(.mp3)
-        let videoOnlyMP3ModeSelected = videoOnlyFallbackWorkflow.mode == .mp3
+        videoOnlyFallbackWorkflow.setMode(.audio)
+        let videoOnlyAudioModeSelected = videoOnlyFallbackWorkflow.mode == .audio
             && !videoOnlyFallbackWorkflow.canDownload
         expect(videoOnlyInspectionStarted && videoOnlyDefaultSelected
-                && videoOnlyMP3ModeSelected,
+                && videoOnlyAudioModeSelected,
                "video-only media keeps both modes selectable and gates only the download button")
 
-        let staleMP3Fake = FakeDownloaderService()
-        let staleMP3Workflow = VideoDownloaderWorkflow(
-            service: staleMP3Fake,
+        let staleAudioFake = FakeDownloaderService()
+        let staleAudioWorkflow = VideoDownloaderWorkflow(
+            service: staleAudioFake,
             brewPathProvider: { "/fake/brew" }, terminalInstallerOpener: { _, _ in false },
             featureAvailability: { true }, automaticallyProbe: false)
-        staleMP3Workflow.refreshDependencies()
-        staleMP3Fake.dependencyProbes[0](readyDependencies)
-        staleMP3Workflow.setMode(.mp3)
-        staleMP3Workflow.setSourceText(requestSource.string)
-        let staleMP3InspectionStarted = waitUntil { staleMP3Fake.inspections.count == 1 }
-        if staleMP3InspectionStarted {
-            let staleMP3Inspection = staleMP3Fake.inspections[0]
-            staleMP3Inspection.1(staleMP3Inspection.0, .failure(.malformedInspection))
+        staleAudioWorkflow.refreshDependencies()
+        staleAudioFake.dependencyProbes[0](readyDependencies)
+        staleAudioWorkflow.setMode(.audio)
+        staleAudioWorkflow.setSourceText(requestSource.string)
+        let staleAudioInspectionStarted = waitUntil { staleAudioFake.inspections.count == 1 }
+        if staleAudioInspectionStarted {
+            let staleAudioInspection = staleAudioFake.inspections[0]
+            staleAudioInspection.1(staleAudioInspection.0, .failure(.malformedInspection))
         }
-        expect(staleMP3InspectionStarted
-                && staleMP3Workflow.mode == .video
-                && staleMP3Workflow.canDownload,
-               "a failed inspection resets a stale MP3 selection to the video path")
+        expect(staleAudioInspectionStarted
+                && staleAudioWorkflow.mode == .video
+                && staleAudioWorkflow.canDownload,
+               "a failed inspection resets a stale audio selection to the video path")
 
         let englishDownloaderStrings = FeatureStrings.videoDownloader(.enUS)
         for language in AppLanguage.allCases {
