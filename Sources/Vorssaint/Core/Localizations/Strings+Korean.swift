@@ -972,7 +972,7 @@ extension Strings {
         videoDownloaderErrorLive: "라이브 및 예정 스트림은 지원하지 않습니다.",
         videoDownloaderErrorDRM: "DRM 보호 미디어는 다운로드할 수 없습니다.",
         videoDownloaderErrorRestricted: "비공개, 유료 또는 로그인 제한 미디어는 지원하지 않습니다.",
-        videoDownloaderErrorNoVideo: "사용 가능한 비디오 스트림이 없습니다. MP3를 선택하세요.",
+        videoDownloaderErrorNoVideo: "사용 가능한 비디오 스트림이 없습니다. 오디오를 선택하세요.",
         videoDownloaderErrorNoAudio: "사용 가능한 오디오 스트림이 없습니다.",
         videoDownloaderErrorMissingDependencies: "다운로드하려면 yt-dlp, FFmpeg(ffprobe 포함), Deno가 모두 필요합니다.",
         videoDownloaderErrorSetupBusy: "다른 Homebrew 작업이 실행 중입니다. 끝난 뒤 다시 시도하세요.",

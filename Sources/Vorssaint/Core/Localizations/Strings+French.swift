@@ -971,7 +971,7 @@ extension Strings {
         videoDownloaderErrorLive: "Les directs et diffusions à venir ne sont pas pris en charge.",
         videoDownloaderErrorDRM: "Les médias protégés par DRM ne peuvent pas être téléchargés.",
         videoDownloaderErrorRestricted: "Les médias privés, payants ou soumis à connexion ne sont pas pris en charge.",
-        videoDownloaderErrorNoVideo: "Ce média n’a pas de flux vidéo utilisable. Choisissez MP3.",
+        videoDownloaderErrorNoVideo: "Ce média n’a pas de flux vidéo utilisable. Choisissez Audio.",
         videoDownloaderErrorNoAudio: "Ce média n’a pas de flux audio utilisable.",
         videoDownloaderErrorMissingDependencies: "yt-dlp, FFmpeg (avec ffprobe) et Deno sont nécessaires au téléchargement.",
         videoDownloaderErrorSetupBusy: "Une autre opération Homebrew est en cours. Réessayez après sa fin.",

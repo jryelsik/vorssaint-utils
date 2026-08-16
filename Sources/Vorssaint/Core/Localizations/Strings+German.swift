@@ -971,7 +971,7 @@ extension Strings {
         videoDownloaderErrorLive: "Live- und bevorstehende Streams werden nicht unterstützt.",
         videoDownloaderErrorDRM: "DRM-geschützte Medien können nicht geladen werden.",
         videoDownloaderErrorRestricted: "Private, kostenpflichtige oder an Anmeldung gebundene Medien werden nicht unterstützt.",
-        videoDownloaderErrorNoVideo: "Dieses Medium hat keinen nutzbaren Videostream. Wähle MP3.",
+        videoDownloaderErrorNoVideo: "Dieses Medium hat keinen nutzbaren Videostream. Wähle Audio.",
         videoDownloaderErrorNoAudio: "Dieses Medium hat keinen nutzbaren Audiostream.",
         videoDownloaderErrorMissingDependencies: "yt-dlp, FFmpeg (einschließlich ffprobe) und Deno werden zum Laden benötigt.",
         videoDownloaderErrorSetupBusy: "Ein anderer Homebrew-Vorgang läuft bereits. Versuche es danach erneut.",

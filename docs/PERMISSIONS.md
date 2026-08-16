@@ -103,7 +103,7 @@ You can review or change every grant in System Settings, under Privacy and Secur
 not previously been granted access. Vorssaint asks for this permission only
 when a feature that needs a folder is enabled or used.
 
-**What uses it.** The Video Downloader saves a finished MP4 or MP3 only in the
+**What uses it.** The Video Downloader saves a finished MP4, MKV or M4A only in the
 destination folder you explicitly choose. WhatsApp download cleanup and the
 experimental organizer use it only when you ask them to inspect or change a
 folder. The downloader does not scan Downloads or another folder at launch.

@@ -971,7 +971,7 @@ extension Strings {
         videoDownloaderErrorLive: "ライブ配信と配信予定には対応していません。",
         videoDownloaderErrorDRM: "DRMで保護されたメディアはダウンロードできません。",
         videoDownloaderErrorRestricted: "非公開、有料、ログイン制限付きメディアには対応していません。",
-        videoDownloaderErrorNoVideo: "利用できるビデオストリームがありません。MP3を選んでください。",
+        videoDownloaderErrorNoVideo: "利用できるビデオストリームがありません。オーディオを選んでください。",
         videoDownloaderErrorNoAudio: "利用できるオーディオストリームがありません。",
         videoDownloaderErrorMissingDependencies: "ダウンロードにはyt-dlp、FFmpeg（ffprobeを含む）、Denoが必要です。",
         videoDownloaderErrorSetupBusy: "別のHomebrew操作が実行中です。完了後に再試行してください。",

@@ -971,7 +971,7 @@ extension Strings {
         videoDownloaderErrorLive: "不支持直播或即将开始的直播。",
         videoDownloaderErrorDRM: "无法下载受 DRM 保护的媒体。",
         videoDownloaderErrorRestricted: "不支持私密、付费或需要登录的媒体。",
-        videoDownloaderErrorNoVideo: "此项目没有可用的视频流。请选择 MP3。",
+        videoDownloaderErrorNoVideo: "此项目没有可用的视频流。请选择音频。",
         videoDownloaderErrorNoAudio: "此项目没有可用的音频流。",
         videoDownloaderErrorMissingDependencies: "下载需要 yt-dlp、FFmpeg（包括 ffprobe）和 Deno。",
         videoDownloaderErrorSetupBusy: "另一项 Homebrew 操作正在运行。请在其结束后重试。",

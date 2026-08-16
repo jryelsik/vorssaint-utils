@@ -971,7 +971,7 @@ extension Strings {
         videoDownloaderErrorLive: "Dirette e trasmissioni future non sono supportate.",
         videoDownloaderErrorDRM: "I contenuti protetti da DRM non possono essere scaricati.",
         videoDownloaderErrorRestricted: "I contenuti privati, a pagamento o con accesso non sono supportati.",
-        videoDownloaderErrorNoVideo: "Questo elemento non ha un flusso video utilizzabile. Scegli MP3.",
+        videoDownloaderErrorNoVideo: "Questo elemento non ha un flusso video utilizzabile. Scegli Audio.",
         videoDownloaderErrorNoAudio: "Questo elemento non ha un flusso audio utilizzabile.",
         videoDownloaderErrorMissingDependencies: "Per scaricare servono yt-dlp, FFmpeg (con ffprobe) e Deno.",
         videoDownloaderErrorSetupBusy: "È già in corso un’altra operazione Homebrew. Riprova quando termina.",

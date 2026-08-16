@@ -611,7 +611,7 @@ final class VideoDownloaderWorkflow: ObservableObject {
             case let .success(media):
                 self.media = media
                 self.inspectionNotice = nil
-                // If the video has no audio track, reset mode from MP3 back to Video to avoid requesting impossible audio extractions.
+                // If the video has no audio track, reset mode from Audio back to Video to avoid requesting impossible audio extractions.
                 if media.audioAvailability == .unavailable {
                     self.mode = .video
                 }

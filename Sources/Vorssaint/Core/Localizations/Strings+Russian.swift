@@ -972,7 +972,7 @@ extension Strings {
         videoDownloaderErrorLive: "Прямые и предстоящие трансляции не поддерживаются.",
         videoDownloaderErrorDRM: "Медиа с DRM скачать нельзя.",
         videoDownloaderErrorRestricted: "Закрытые, платные и требующие входа медиа не поддерживаются.",
-        videoDownloaderErrorNoVideo: "У объекта нет подходящего видеопотока. Выберите MP3.",
+        videoDownloaderErrorNoVideo: "У объекта нет подходящего видеопотока. Выберите Аудио.",
         videoDownloaderErrorNoAudio: "У объекта нет подходящего аудиопотока.",
         videoDownloaderErrorMissingDependencies: "Для загрузки нужны yt-dlp, FFmpeg (включая ffprobe) и Deno.",
         videoDownloaderErrorSetupBusy: "Уже выполняется другая операция Homebrew. Повторите после её завершения.",

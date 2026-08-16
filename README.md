@@ -123,7 +123,7 @@ The rest bends the same way: panel sections reorder and hide, the compact layout
 - **Messaging downloads.** The Cleaner can also tidy the media a messaging app saves into Downloads, confirmed by macOS metadata and only ever moved to the Trash, with a review list, retention rules and an optional organizer that files new ones into a folder of your choice.
 - **Uninstaller.** Drop an app in and take its verified caches, preferences, helpers and other leftovers to the Trash with it.
 - **Media tools.** Compress videos, convert images one at a time or in batches with resizing, watermarks and reusable profiles, make GIFs and extract text, all locally.
-- **Video Downloader.** Paste one yt-dlp-supported, non-live media link, inspect its title, thumbnail, numeric qualities and optional video captions with the app's deterministic yt-dlp policy, then save a losslessly merged or remuxed MP4/MKV or a highest-quality MP3. Downloads stay in a hidden staging folder until complete, support cancellation and never publish subtitle or thumbnail sidecars.
+- **Video Downloader.** Paste one yt-dlp-supported, non-live media link, inspect its title, thumbnail, numeric qualities and optional video captions with the app's deterministic yt-dlp policy, then save a losslessly merged or remuxed MP4/MKV or highest-quality M4A audio. Downloads stay in a hidden staging folder until complete, support cancellation and never publish subtitle or thumbnail sidecars.
 - **Homebrew manager.** Search, install and remove formulae and casks without opening a terminal.
 - **Cleaning Mode.** Locks the keyboard and blacks out every display while you clean.
 

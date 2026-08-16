@@ -972,7 +972,7 @@ extension Strings {
         videoDownloaderErrorLive: "不支援直播或即將開始的直播。",
         videoDownloaderErrorDRM: "無法下載受 DRM 保護的媒體。",
         videoDownloaderErrorRestricted: "不支援私人、付費或需要登入的媒體。",
-        videoDownloaderErrorNoVideo: "此項目沒有可用的影片串流。請選擇 MP3。",
+        videoDownloaderErrorNoVideo: "此項目沒有可用的影片串流。請選擇音訊。",
         videoDownloaderErrorNoAudio: "此項目沒有可用的音訊串流。",
         videoDownloaderErrorMissingDependencies: "下載需要 yt-dlp、FFmpeg（包括 ffprobe）及 Deno。",
         videoDownloaderErrorSetupBusy: "另一項 Homebrew 操作正在執行。請在完成後再試。",
