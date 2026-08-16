@@ -901,6 +901,8 @@ extension Strings {
         switcherShowShortcutHints: "Mostra suggerimenti scorciatoie",
         switcherShowShortcutHintsCaption: "Mostra le scorciatoie per app e finestre sotto le icone.",
         uninstallerHomebrewPackageFormat: "%@ verrà rimosso anche da Homebrew.",
+        shelfEdgeToggle: "Apri vicino a un bordo dello schermo",
+        shelfEdgeCaption: "Trascina un file verso il bordo dello schermo per far intravedere il ripiano. Rilascialo lì, oppure torna indietro e si ritira.",
         videoDownloaderPageTitle: "Downloader video",
         videoDownloaderHubDescription: "Scarica un video o audio scegliendo qualità e sottotitoli",
         videoDownloaderPanelCaption: "Salva un link multimediale come MP4/MKV o M4A",

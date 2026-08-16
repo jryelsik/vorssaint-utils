@@ -902,6 +902,8 @@ extension Strings {
         switcherShowShortcutHints: "Показывать подсказки сочетаний клавиш",
         switcherShowShortcutHintsCaption: "Показывает сочетания клавиш для приложений и окон под значками.",
         uninstallerHomebrewPackageFormat: "%@ также будет удалён из Homebrew.",
+        shelfEdgeToggle: "Открывать у края экрана",
+        shelfEdgeCaption: "Перетащите файл к краю экрана, чтобы полка выглянула. Отпустите его там, или потяните обратно, и полка уберётся.",
         videoDownloaderPageTitle: "Загрузчик видео",
         videoDownloaderHubDescription: "Скачивайте видео или аудио с выбором качества и субтитров",
         videoDownloaderPanelCaption: "Сохраните ссылку на медиа как MP4/MKV или M4A",

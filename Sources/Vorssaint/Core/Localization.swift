@@ -1045,6 +1045,8 @@ struct Strings {
     let switcherShowShortcutHints: String
     let switcherShowShortcutHintsCaption: String
     let uninstallerHomebrewPackageFormat: String
+    let shelfEdgeToggle: String
+    let shelfEdgeCaption: String
     let videoDownloaderPageTitle: String
     let videoDownloaderHubDescription: String
     let videoDownloaderPanelCaption: String
@@ -2030,6 +2032,8 @@ extension Strings {
         switcherShowShortcutHints: "Mostrar dicas de atalhos",
         switcherShowShortcutHintsCaption: "Exibe os atalhos de apps e janelas abaixo dos ícones.",
         uninstallerHomebrewPackageFormat: "%@ também será removido do Homebrew.",
+        shelfEdgeToggle: "Abrir perto de uma borda da tela",
+        shelfEdgeCaption: "Ao arrastar um arquivo para perto da borda da tela, a área espia para dentro. Solte ali, ou puxe de volta e ela recua.",
         videoDownloaderPageTitle: "Baixador de vídeos",
         videoDownloaderHubDescription: "Baixe um vídeo ou áudio com opções de qualidade e legenda",
         videoDownloaderPanelCaption: "Salve um link de mídia como MP4/MKV ou M4A",
@@ -2112,7 +2116,7 @@ extension Strings {
         videoDownloaderErrorSubtitle: "Não foi possível baixar e incorporar a legenda selecionada. Se ela exigir login, ative os cookies do navegador e tente novamente.",
         videoDownloaderErrorSubtitleRateLimited: "Foram feitas muitas solicitações de legendas (HTTP 429). O site de vídeo recusou temporariamente a legenda selecionada. Tente novamente mais tarde ou escolha a legenda no idioma original.",
         videoDownloaderErrorOptionalData: "Não foi possível incorporar a capa, os metadados ou os capítulos solicitados.",
-        videoDownloaderErrorFileSafety: "Não foi possível verificar ou colocar com segurança o arquivo final na pasta selecionada.",
+        videoDownloaderErrorFileSafety: "Não foi possível verificar ou colocar com segurança o arquivo final na pasta selecionada."
     )
 }
 
@@ -3016,6 +3020,8 @@ extension Strings {
         switcherShowShortcutHints: "Show shortcut hints",
         switcherShowShortcutHintsCaption: "Shows the app and window shortcuts below the icons.",
         uninstallerHomebrewPackageFormat: "%@ will also be removed from Homebrew.",
+        shelfEdgeToggle: "Open near a screen edge",
+        shelfEdgeCaption: "Drag a file toward the screen edge to peek the shelf in. Drop it there, or pull back and it retreats.",
         videoDownloaderPageTitle: "Video Downloader",
         videoDownloaderHubDescription: "Download a video or audio track with quality and subtitle choices",
         videoDownloaderPanelCaption: "Save a media link as MP4/MKV or M4A",
@@ -3098,6 +3104,6 @@ extension Strings {
         videoDownloaderErrorSubtitle: "The selected subtitle could not be downloaded and embedded. If it requires sign-in, enable browser cookies and try again.",
         videoDownloaderErrorSubtitleRateLimited: "Too many subtitle requests were made (HTTP 429). The video site temporarily rejected the selected subtitle. Try again later or choose the original-language subtitle.",
         videoDownloaderErrorOptionalData: "The requested artwork, metadata or chapters could not be embedded.",
-        videoDownloaderErrorFileSafety: "The finished file could not be verified or safely placed in the selected folder.",
+        videoDownloaderErrorFileSafety: "The finished file could not be verified or safely placed in the selected folder."
     )
 }

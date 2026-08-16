@@ -293,6 +293,67 @@ struct MetricsTests {
         expect(ClipboardHistorySearch.rankedIndexes(candidates: clipboardCandidates,
                                                     matching: "missing") == [],
                "clipboard search returns no results for unmatched terms")
+
+        // MARK: Clipboard auto clear preferences
+
+        expect(Defaults.sanitizedClipboardAutoClearDelay(20) == 20,
+               "auto clear delay in range passes through")
+        expect(Defaults.sanitizedClipboardAutoClearDelay(4) == 5,
+               "auto clear delay below the floor clamps up, so a typed 4 does not jump to the default")
+        expect(Defaults.sanitizedClipboardAutoClearDelay(0) == 5,
+               "auto clear delay of zero clamps up instead of clearing instantly")
+        expect(Defaults.sanitizedClipboardAutoClearDelay(99_999) == 3_600,
+               "auto clear delay above the ceiling clamps down")
+        expect(Defaults.registeredDefaults[DefaultsKey.clipboardAutoClearOnDelay] as? Bool == false,
+               "auto clear is off until asked for")
+        expect(Defaults.registeredDefaults[DefaultsKey.clipboardAutoClearOnSleep] as? Bool == false,
+               "clear on computer sleep is off until asked for")
+        expect(Defaults.registeredDefaults[DefaultsKey.clipboardAutoClearOnDisplaySleep] as? Bool == false,
+               "clear on display sleep is off until asked for")
+        expect(Defaults.registeredDefaults[DefaultsKey.clipboardAutoClearOnScreenLock] as? Bool == false,
+               "clear on screen lock is off until asked for")
+        expect(Defaults.registeredDefaults[DefaultsKey.clipboardAutoClearDelay] as? Int == 20,
+               "auto clear starts at twenty seconds")
+
+        // MARK: Clipboard auto clear timing
+
+        let autoClearCopiedAt = Date(timeIntervalSince1970: 1_000_000)
+        expect(ClipboardAutoClearSupport.decide(changeCount: 8,
+                                                lastChangeCount: 7,
+                                                lastClearedChangeCount: 0,
+                                                lastChangeDate: autoClearCopiedAt,
+                                                now: autoClearCopiedAt.addingTimeInterval(600),
+                                                delay: 20) == .noteChange,
+               "a new change count restarts the clock however long the old content sat there")
+        expect(ClipboardAutoClearSupport.decide(changeCount: 7,
+                                                lastChangeCount: 7,
+                                                lastClearedChangeCount: 0,
+                                                lastChangeDate: autoClearCopiedAt,
+                                                now: autoClearCopiedAt.addingTimeInterval(19),
+                                                delay: 20) == .wait,
+               "unchanged content waits until the delay is up")
+        expect(ClipboardAutoClearSupport.decide(changeCount: 7,
+                                                lastChangeCount: 7,
+                                                lastClearedChangeCount: 0,
+                                                lastChangeDate: autoClearCopiedAt,
+                                                now: autoClearCopiedAt.addingTimeInterval(20),
+                                                delay: 20) == .clear,
+               "unchanged content clears once the delay is exactly up")
+        expect(ClipboardAutoClearSupport.decide(changeCount: 7,
+                                                lastChangeCount: 7,
+                                                lastClearedChangeCount: 0,
+                                                lastChangeDate: autoClearCopiedAt,
+                                                now: autoClearCopiedAt.addingTimeInterval(8 * 3_600),
+                                                delay: 20) == .clear,
+               "waking after hours of sleep clears at once instead of waiting out another delay")
+        expect(ClipboardAutoClearSupport.decide(changeCount: 7,
+                                                lastChangeCount: 7,
+                                                lastClearedChangeCount: 7,
+                                                lastChangeDate: autoClearCopiedAt,
+                                                now: autoClearCopiedAt.addingTimeInterval(600),
+                                                delay: 20) == .wait,
+               "the count our own clear produced never clears again, so clearing cannot loop")
+
         expect(FeatureStrings.clipboard(.ptBR).shortcutHint.contains("colar no app anterior"),
                "clipboard shortcut hint exposes row click paste in Portuguese")
         expect(FeatureStrings.clipboard(.ptBR).shortcutHint.contains("⌘+clique seleciona"),
@@ -342,6 +403,13 @@ struct MetricsTests {
                          "\(language.rawValue) paste-selected button format")
             expectFormat(clipboardStrings.copySelectedFormat, ["d"],
                          "\(language.rawValue) copy-selected button format")
+            expect(!clipboardStrings.autoClearEnable.isEmpty
+                   && !clipboardStrings.autoClearSecondsSuffix.isEmpty
+                   && !clipboardStrings.autoClearOnSleep.isEmpty
+                   && !clipboardStrings.autoClearOnDisplaySleep.isEmpty
+                   && !clipboardStrings.autoClearOnScreenLock.isEmpty
+                   && !clipboardStrings.autoClearCaption.isEmpty,
+                   "\(language.rawValue) clipboard auto clear labels are localized")
             let layoutStrings = FeatureStrings.windowLayout(language)
             expect(!layoutStrings.sixths.isEmpty
                    && !layoutStrings.topLeftSixth.isEmpty
@@ -2110,6 +2178,8 @@ struct MetricsTests {
                "shelf shortcut defaults to Ctrl+Opt+Cmd+D")
         expect(registeredDefaults[DefaultsKey.shelfShakeToOpen] as? Bool == true,
                "shelf shake opens by default once shelf is enabled")
+        expect(registeredDefaults[DefaultsKey.shelfEdgeDragEnabled] as? Bool == false,
+               "new shelf edge opening stays off by default")
         expect(registeredDefaults[DefaultsKey.shelfCloseAfterDrop] as? Bool == false,
                "closing after a drop is new behavior and must arrive off in an update")
         expect(registeredDefaults[DefaultsKey.shelfRemoveAfterDrop] as? Bool == true,
@@ -5297,6 +5367,82 @@ struct MetricsTests {
             baselineChangeCount: 5, changeCount: 5, beganInDock: false,
             hasDroppableContent: { fatalError("droppable check must stay lazy") }),
                "an unchanged pasteboard outside the Dock skips the content inspection")
+
+        let singleScreen = [ShelfEdgeScreen(frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+                                            visibleFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080))]
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 10, y: 500), screens: singleScreen,
+                                          distance: 24)?.edge == .left,
+               "a point near the left edge of the only screen is a left-edge match")
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 1910, y: 500), screens: singleScreen,
+                                          distance: 24)?.edge == .right,
+               "a point near the right edge of the only screen is a right-edge match")
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 960, y: 500), screens: singleScreen,
+                                          distance: 24) == nil,
+               "a point in the middle of the screen matches no edge")
+
+        let sideBySide = [ShelfEdgeScreen(frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+                                          visibleFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080)),
+                          ShelfEdgeScreen(frame: CGRect(x: 1920, y: 0, width: 1920, height: 1080),
+                                          visibleFrame: CGRect(x: 1920, y: 0, width: 1920, height: 1080))]
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 1918, y: 500), screens: sideBySide,
+                                          distance: 24) == nil,
+               "a seam shared by two adjacent screens counts as neither screen's own edge")
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 10, y: 500), screens: sideBySide,
+                                          distance: 24)?.edge == .left,
+               "the true outer left edge of the first screen still matches with a second screen present")
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 3830, y: 500), screens: sideBySide,
+                                          distance: 24)?.edge == .right,
+               "the true outer right edge of the second screen still matches")
+
+        let leftDockScreen = [ShelfEdgeScreen(frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+                                              visibleFrame: CGRect(x: 70, y: 0, width: 1850, height: 1080))]
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 30, y: 500), screens: leftDockScreen,
+                                          distance: 200) == nil,
+               "a point resting inside a left-mounted Dock's reserved margin does not trigger a peek")
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 150, y: 500), screens: leftDockScreen,
+                                          distance: 200)?.edge == .left,
+               "a point past the Dock's margin, still within the trigger distance, matches normally")
+        let rightDockScreen = [ShelfEdgeScreen(frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+                                               visibleFrame: CGRect(x: 0, y: 0, width: 1850, height: 1080))]
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 1890, y: 500), screens: rightDockScreen,
+                                          distance: 200) == nil,
+               "a point resting inside a right-mounted Dock's reserved margin does not trigger a peek")
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 1770, y: 500), screens: rightDockScreen,
+                                          distance: 200)?.edge == .right,
+               "a point past the right Dock's margin, still within the trigger distance, matches normally")
+        let noDockScreen = [ShelfEdgeScreen(frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+                                            visibleFrame: CGRect(x: 0, y: 40, width: 1920, height: 1040))]
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 10, y: 500), screens: noDockScreen,
+                                          distance: 200)?.edge == .left,
+               "a Dock or menu bar that only narrows the visible frame vertically (bottom Dock, menu bar) leaves left/right matching unaffected")
+
+        let leftMatch = ShelfEdgeMatch(edge: .left, screen: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        expect(ShelfEdgeDragSupport.stillNear(leftMatch, point: CGPoint(x: 30, y: 500), distance: 40),
+               "a point within the wider retreat distance of the peeking edge is still near it")
+        expect(!ShelfEdgeDragSupport.stillNear(leftMatch, point: CGPoint(x: 960, y: 500), distance: 40),
+               "a point back in the middle of the screen is no longer near the peeking edge")
+        expect(!ShelfEdgeDragSupport.stillNear(leftMatch, point: CGPoint(x: 1910, y: 500), distance: 40),
+               "a point near the right side of the same screen does not count as still near a left-edge peek")
+
+        expect(ShelfEdgeDragSupport.hasDwelled(since: 100.0, now: 100.16, required: 0.15),
+               "a dwell longer than the required duration counts as sustained")
+        expect(!ShelfEdgeDragSupport.hasDwelled(since: 100.0, now: 100.05, required: 0.15),
+               "a dwell shorter than the required duration does not count yet")
+
+        expect(ShelfEdgeDragSupport.triggerDistance == 200 && ShelfEdgeDragSupport.retreatDistance == 330
+               && ShelfEdgeDragSupport.dwell == 0.15,
+               "the shipped trigger distance, retreat distance, and dwell are pinned, so a future retune has to update this test")
+        expect(ShelfEdgeDragSupport.match(at: CGPoint(x: 1918, y: 500), screens: sideBySide,
+                                          distance: ShelfEdgeDragSupport.triggerDistance) == nil,
+               "the seam stays safe at the shipped trigger distance, not just the smaller distance the earlier cases use")
+        let shippedLeftMatch = ShelfEdgeMatch(edge: .left, screen: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        // x: 100 sits safely inside the peeking panel's own on-screen strip
+        // (ShelfView.panelWidth / 3, rounded: 304 / 3 ≈ 101), which the
+        // retreat check relies on covering instead of a separate panel-frame
+        // check.
+        expect(ShelfEdgeDragSupport.stillNear(shippedLeftMatch, point: CGPoint(x: 100, y: 500),
+                                              distance: ShelfEdgeDragSupport.retreatDistance),
+               "the shipped retreat distance comfortably covers the peeking panel's own on-screen strip")
 
         let shelfFile = ShelfPersistedItem(id: UUID(), kind: .file, title: "notes.pdf",
                                            path: "/tmp/notes.pdf")
@@ -8611,7 +8757,7 @@ struct MetricsTests {
         for language in AppLanguage.allCases {
             let values = Mirror(reflecting: FeatureStrings.clipboard(language)).children
                 .compactMap { $0.value as? String }
-            expect(values.count == 46 && values.allSatisfy { !$0.isEmpty },
+            expect(values.count == 52 && values.allSatisfy { !$0.isEmpty },
                    "every clipboard string is set for \(language.rawValue)")
             expect(values.allSatisfy { !$0.contains("—") },
                    "no em-dash in visible clipboard strings (\(language.rawValue))")
@@ -9035,11 +9181,12 @@ struct MetricsTests {
         // MARK: Display brightness (DDC/CI helpers)
 
         let ddcWrite = BrightnessSupport.writePacket(code: 0x10, value: 0x1234)
-        expect(ddcWrite == [0x84, 0x03, 0x10, 0x12, 0x34,
-                            0x6E ^ 0x51 ^ 0x84 ^ 0x03 ^ 0x10 ^ 0x12 ^ 0x34],
+        let expectedDDCWrite: [UInt8] = [0x84, 0x03, 0x10, 0x12, 0x34, 0x8E]
+        expect(ddcWrite == expectedDDCWrite,
                "DDC write packet carries the set opcode, big-endian value and checksum")
         let ddcRead = BrightnessSupport.readRequestPacket(code: 0x10)
-        expect(ddcRead == [0x82, 0x01, 0x10, 0x6E ^ 0x82 ^ 0x01 ^ 0x10],
+        let expectedDDCRead: [UInt8] = [0x82, 0x01, 0x10, 0xFD]
+        expect(ddcRead == expectedDDCRead,
                "DDC read request omits the sub-address from its checksum seed")
         expect(Array(BrightnessSupport.writePacket(code: 0x10, value: 100)[3...4]) == [0x00, 0x64],
                "DDC values split into high and low bytes")

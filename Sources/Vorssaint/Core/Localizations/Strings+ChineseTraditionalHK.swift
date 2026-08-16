@@ -902,6 +902,8 @@ extension Strings {
         switcherShowShortcutHints: "顯示快速鍵提示",
         switcherShowShortcutHintsCaption: "在圖示下方顯示 App 和視窗快速鍵。",
         uninstallerHomebrewPackageFormat: "%@ 亦會從 Homebrew 移除。",
+        shelfEdgeToggle: "接近螢幕邊緣時開啟",
+        shelfEdgeCaption: "將檔案拖曳至螢幕邊緣，暫存架便會探出一角。放在那裡即可放低，往回拖曳暫存架便會縮回去。",
         videoDownloaderPageTitle: "影片下載器",
         videoDownloaderHubDescription: "下載影片或音訊，並選擇畫質及字幕",
         videoDownloaderPanelCaption: "將媒體連結儲存為 MP4/MKV 或 M4A",
