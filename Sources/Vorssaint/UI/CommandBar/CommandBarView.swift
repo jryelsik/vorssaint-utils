@@ -161,6 +161,17 @@ struct CommandBarView: View {
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(action.isDestructive ? Color.red : Color.primary)
                             Spacer(minLength: 12)
+                            if let shortcut = action.shortcut {
+                                Text(shortcut)
+                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2.5)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                            .fill(Color.primary.opacity(0.06))
+                                    )
+                            }
                             Image(systemName: "return")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(.tertiary)
@@ -695,6 +706,21 @@ struct CommandBarView: View {
                 .font(.system(size: 9, weight: .semibold, design: .rounded))
                 .foregroundStyle(.tertiary)
             Spacer()
+            if service.canQuitSelectedApp {
+                Text("⌘Q")
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.tertiary)
+                Text("Quit")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                Text("⌘R")
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.tertiary)
+                Text("Restart")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .padding(.trailing, 4)
+            }
             if service.canOpenActions {
                 Text("⌘K")
                     .font(.system(size: 9, weight: .semibold, design: .rounded))
