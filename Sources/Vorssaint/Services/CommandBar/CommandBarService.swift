@@ -1878,9 +1878,8 @@ final class CommandBarService: ObservableObject {
         if let loadedAt = windowsLoadedAt, Date().timeIntervalSince(loadedAt) < 4 { return }
         guard !windowsLoading else { return }
         windowsLoading = true
-        let snapshot = WindowEnumerator.captureCommandBarSnapshot()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let windows = WindowEnumerator.listWindowsForCommandBar(from: snapshot)
+            let windows = WindowEnumerator.listWindowsForCommandBar()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.windowsLoading = false
