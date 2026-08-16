@@ -26,7 +26,7 @@ and making source builds compatible with older development tools.
   Thanks to @MaximilianMauroner.
 - Video Downloader downloads video as Apple-ready MP4/MKV or highest-quality M4A audio
   from YouTube and supported media links, with resolution choice, subtitle embedding,
-  cover art and live progress.
+  cover art and live progress. Thanks to @huseyinbal05.
 
 ### Changed
 - Volume Mixer percentages can now be entered directly for the system output and each app.
