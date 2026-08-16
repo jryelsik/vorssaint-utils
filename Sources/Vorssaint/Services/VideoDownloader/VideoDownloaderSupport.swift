@@ -1653,7 +1653,7 @@ enum VideoDownloaderCommandBuilder {
         case .audio:
             arguments += ["-i", artwork.path, "-map", "0", "-map", "1:v:0",
                           "-map_metadata", "0", "-map_chapters", "0", "-c", "copy",
-                          "-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic"]
+                          "-c:v:0", "mjpeg", "-disposition:v:0", "attached_pic"]
         }
         arguments.append(output.path)
         return VideoDownloaderToolCommand(executable: ffmpegPath, arguments: arguments)

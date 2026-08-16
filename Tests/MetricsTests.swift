@@ -13984,6 +13984,13 @@ struct MetricsTests {
         expect(mkvArtwork.contains("-attach") && mkvArtwork.contains("mimetype=image/jpeg")
                 && mkvArtwork.contains("filename=cover.jpg") && !mkvArtwork.contains("-c:v:1"),
                "Matroska artwork uses a native attachment instead of an ordinary video stream")
+        let audioArtwork = VideoDownloaderCommandBuilder.ffmpegArtwork(
+            ffmpegPath: "ffmpeg", input: URL(fileURLWithPath: "/tmp/in.m4a"),
+            artwork: URL(fileURLWithPath: "/tmp/cover.jpg"),
+            output: URL(fileURLWithPath: "/tmp/out.m4a"), mode: .audio).arguments
+        expect(audioArtwork.contains("-c:v:0") && audioArtwork.contains("-disposition:v:0")
+                && audioArtwork.contains("attached_pic") && !audioArtwork.contains("-c:v:1"),
+               "audio artwork targets the single primary video stream in an audio-only container")
 
         let downloaderTemp = FileManager.default.temporaryDirectory
             .appendingPathComponent("vorssaint-downloader-tests-\(UUID().uuidString)", isDirectory: true)
