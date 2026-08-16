@@ -34,17 +34,20 @@ final class CommandBarService: ObservableObject {
         let id: String
         let title: String
         let symbolName: String
+        let shortcut: String?
         let isDestructive: Bool
         let run: () -> Void
 
         init(id: String,
              title: String,
              symbolName: String,
+             shortcut: String? = nil,
              isDestructive: Bool = false,
              run: @escaping () -> Void) {
             self.id = id
             self.title = title
             self.symbolName = symbolName
+            self.shortcut = shortcut
             self.isDestructive = isDestructive
             self.run = run
         }
@@ -1246,6 +1249,12 @@ final class CommandBarService: ObservableObject {
         return !actions(for: entry).isEmpty
     }
 
+    var canQuitSelectedApp: Bool {
+        guard case .search = mode, let entry = selectedEntry,
+              let app = installedApp(for: entry) else { return false }
+        return runningApplication(for: app) != nil
+    }
+
     private func actions(for entry: CommandBarEntry) -> [RowAction] {
         let bar = FeatureStrings.commandBar(L10n.shared.language)
         var actions: [RowAction] = []
@@ -1253,7 +1262,8 @@ final class CommandBarService: ObservableObject {
             if let running = runningApplication(for: app) {
                 actions.append(RowAction(id: "quitApp",
                                          title: String(format: bar.quitFormat, app.name),
-                                         symbolName: "xmark.circle") { [weak self] in
+                                         symbolName: "xmark.circle",
+                                         shortcut: "⌘Q") { [weak self] in
                     self?.quit(running)
                 })
                 actions.append(RowAction(id: "restartApp",
@@ -2053,7 +2063,7 @@ final class CommandBarService: ObservableObject {
 
             if event.modifierFlags.contains(.command) {
                 switch Int(event.keyCode) {
-                case kVK_ANSI_Q, kVK_ANSI_W, kVK_ANSI_M, kVK_ANSI_H:
+                case kVK_ANSI_W, kVK_ANSI_M, kVK_ANSI_H:
                     // The app's menu owns these combinations and the panel is
                     // key, so they would quit, close or hide Vorssaint while
                     // the person believes they are acting on the app the bar
@@ -2067,6 +2077,21 @@ final class CommandBarService: ObservableObject {
                 default:
                     break
                 }
+            }
+            if event.modifierFlags.contains(.command), Int(event.keyCode) == kVK_ANSI_Q {
+                if case .actions = self.mode,
+                   let quitAction = self.actionRows.first(where: { $0.id == "quitApp" }) {
+                    self.runAction(quitAction)
+                    return nil
+                }
+                if case .search = self.mode,
+                   let entry = self.selectedEntry,
+                   let app = self.installedApp(for: entry),
+                   let running = self.runningApplication(for: app) {
+                    self.quit(running)
+                    return nil
+                }
+                return nil
             }
             if event.modifierFlags.contains(.command), Int(event.keyCode) == kVK_ANSI_K {
                 self.openActions()
