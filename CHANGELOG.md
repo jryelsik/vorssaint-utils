@@ -7,10 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [3.3.2]
 
 ### Summary
-Vorssaint 3.3.2 adds batch image conversion, local Command Bar scripts, recent captures and
-desktop window controls. It also improves app discovery, conversions, capture control and volume
-adjustments while making Shelf selection faster, keeping window tools from quitting at launch and
-making source builds compatible with older development tools.
+Vorssaint 3.3.2 adds a local-first Video Downloader, batch image conversion, local Command Bar scripts,
+recent captures and desktop window controls. It also improves app discovery, conversions, capture control
+and volume adjustments while making Shelf selection faster, keeping window tools from quitting at launch
+and making source builds compatible with older development tools.
 
 ### Added
 - Media now converts images in batches with resizing, watermarks, renaming and
@@ -24,8 +24,9 @@ making source builds compatible with older development tools.
   optional shortcuts.
 - Emoji can open directly from a shortcut assigned to its Command Bar row.
   Thanks to @MaximilianMauroner.
-- Video Downloader can inspect a non-live HTTP or HTTPS media link and save a losslessly
-  merged or remuxed MP4 or a highest-quality M4A using local tools.
+- Video Downloader downloads video as Apple-ready MP4/MKV or highest-quality M4A audio
+  from YouTube and supported media links, with resolution choice, subtitle embedding,
+  cover art and live progress.
 
 ### Changed
 - Volume Mixer percentages can now be entered directly for the system output and each app.
