@@ -8,19 +8,30 @@ import UniformTypeIdentifiers
 
 typealias VideoDownloaderArtworkFetching = (URL, TimeInterval, () -> Bool) -> Data?
 
-private enum VideoDownloaderProcessTermination: Equatable {
+enum VideoDownloaderProcessTermination: Equatable {
     case failedToStart
     case exited(Int32)
     case timedOut
 }
 
-/// Control-flow errors for optional embedding passes. If subtitle injection or cover art
-/// embedding fails, we still publish the main video/audio file with a warning rather
-/// than failing the entire download.
-private enum VideoDownloaderOptionalEmbedError: Error {
-    case subtitle
-    case artwork
+struct VideoDownloaderProcessResult {
+    let termination: VideoDownloaderProcessTermination
+    let stdout: Data
+    let stderr: Data
+    let stdoutOverflow: Bool
+
+    var didTimeOut: Bool {
+        if case .timedOut = termination { return true }
+        return false
+    }
+
+    var succeeded: Bool {
+        if case .exited(0) = termination { return true }
+        return false
+    }
 }
+
+typealias ProcessResult = VideoDownloaderProcessResult
 
 protocol VideoDownloaderProcessServicing: AnyObject {
     func probeDependencies(completion: @escaping (VideoDownloaderDependencies) -> Void)
@@ -65,6 +76,7 @@ final class VideoDownloaderProcessService: VideoDownloaderProcessServicing {
     private let mutationGate: HomebrewMutationGate
     private let timeoutPolicy: VideoDownloaderTimeoutPolicy
     private let artworkFetcher: VideoDownloaderArtworkFetching
+    private let postProcessor: VideoDownloaderPostProcessor
     private var inspectionOperation: VideoDownloaderProcessOperation?
     private var downloadOperation: VideoDownloaderProcessOperation?
     private var setupOperation: VideoDownloaderProcessOperation?
@@ -80,6 +92,11 @@ final class VideoDownloaderProcessService: VideoDownloaderProcessServicing {
         self.mutationGate = mutationGate
         self.timeoutPolicy = timeoutPolicy
         self.artworkFetcher = artworkFetcher
+        self.postProcessor = VideoDownloaderPostProcessor(
+            timeoutPolicy: timeoutPolicy,
+            artworkFetcher: artworkFetcher,
+            runner: Self.runPostProcessCommand
+        )
     }
 
     func probeDependencies(completion: @escaping (VideoDownloaderDependencies) -> Void) {
@@ -275,15 +292,14 @@ final class VideoDownloaderProcessService: VideoDownloaderProcessServicing {
                 }
                 let hasIgnoredImpersonationWarning = diagnostics.hasIgnoredImpersonationWarning
                 // yt-dlp can exit non-zero for non-fatal reasons (like missing impersonation targets
-                // or failed optional captions). As long as ffprobe validates the media, we treat the download as successful.
                 let optionalMediaFailure = !result.succeeded
                     && (!optionalWarnings.isEmpty || hasIgnoredImpersonationWarning)
                     && stagedMedia.map {
                         !diagnostics.hasNonOptionalFailureSignal
-                            && self.isValidMediaCandidate($0,
-                                                          request: request,
-                                                          ffprobePath: ffprobe,
-                                                          operation: operation)
+                            && self.postProcessor.isValidMediaCandidate($0,
+                                                                        request: request,
+                                                                        ffprobePath: ffprobe,
+                                                                        operation: operation)
                     } == true
                 if optionalMediaFailure, reportedPath == nil {
                     reportedPath = stagedMedia?.path
@@ -296,54 +312,19 @@ final class VideoDownloaderProcessService: VideoDownloaderProcessServicing {
                 optionalWarnings.forEach { self.appendWarning($0, to: &warnings) }
 
                 guard let reportedPath else { throw VideoDownloaderFailure.fileSafety }
-                var mediaFile = try VideoDownloaderFileSupport.finalMedia(in: created,
-                                                                          reportedPath: reportedPath,
-                                                                          mode: request.mode)
                 let subtitleFailedDuringMediaDownload = optionalMediaFailure
                     && subtitleWarning != nil
-                var suppressMissingSubtitleWarning = subtitleFailedDuringMediaDownload
-                    && request.mode == .video
-                if request.mode == .video, let subtitle = request.subtitle, !subtitleFailedDuringMediaDownload {
-                    do {
-                        mediaFile = try self.embedSubtitle(
-                            in: mediaFile,
-                            subtitle: subtitle,
-                            staging: created,
-                            ffmpegPath: ffmpeg,
-                            operation: operation)
-                        suppressMissingSubtitleWarning = false
-                    } catch let failure as VideoDownloaderFailure where failure == .cancelled {
-                        throw failure
-                    } catch {
-                        self.appendWarning(.subtitle, to: &warnings)
-                    }
-                }
-                if request.options.thumbnail, let thumbnailURL = request.media.thumbnailURL {
-                    do {
-                        mediaFile = try self.embedArtwork(in: mediaFile,
-                                                          thumbnailURL: thumbnailURL,
-                                                          staging: created,
-                                                          mode: request.mode,
-                                                          ffmpegPath: ffmpeg,
-                                                          operation: operation)
-                    } catch let failure as VideoDownloaderFailure where failure == .cancelled {
-                        throw failure
-                    } catch {
-                        self.appendWarning(.artwork, to: &warnings)
-                    }
-                }
-                let normalized = try self.verifyAndNormalizeMedia(in: mediaFile,
-                                                                  staging: created,
-                                                                  request: request,
-                                                                  ffprobePath: ffprobe,
-                                                                  operation: operation,
-                                                                  suppressMissingSubtitleWarning: suppressMissingSubtitleWarning)
-                mediaFile = normalized.file
-                normalized.warnings.forEach { self.appendWarning($0, to: &warnings) }
-                if operation.wasCancelled { throw VideoDownloaderFailure.cancelled }
-                let published = try VideoDownloaderFileSupport.publish(mediaFile,
-                                                                        into: request.destination)
-                return VideoDownloaderDownloadResult(file: published, warnings: warnings)
+
+                return try self.postProcessor.process(
+                    reportedPath: reportedPath,
+                    staging: created,
+                    request: request,
+                    ffmpegPath: ffmpeg,
+                    ffprobePath: ffprobe,
+                    initialWarnings: warnings,
+                    subtitleFailedDuringMediaDownload: subtitleFailedDuringMediaDownload,
+                    operation: operation
+                )
             }
             return .success(published)
         } catch let failure as VideoDownloaderFailure {
@@ -748,177 +729,22 @@ final class VideoDownloaderProcessService: VideoDownloaderProcessServicing {
             .contains(where: message.contains)
     }
 
-    private func isValidMediaCandidate(_ mediaFile: URL,
-                                       request: VideoDownloaderRequest,
-                                       ffprobePath: String,
-                                       operation: VideoDownloaderProcessOperation) -> Bool {
-        guard let inspection = try? embeddedMediaInspection(in: mediaFile,
-                                                             ffprobePath: ffprobePath,
-                                                             operation: operation) else {
-            return false
-        }
-        return VideoDownloaderEmbeddedDataVerifier.failure(in: inspection, for: request) == nil
-    }
-
-    private func embeddedMediaInspection(in mediaFile: URL,
-                                         ffprobePath: String,
-                                         operation: VideoDownloaderProcessOperation)
-        throws -> VideoDownloaderEmbeddedDataInspection {
-        guard FileManager.default.isExecutableFile(atPath: ffprobePath) else {
-            throw VideoDownloaderFailure.missingDependencies
-        }
-        let result = run(VideoDownloaderCommandBuilder.ffprobe(ffprobePath: ffprobePath, input: mediaFile),
-                         standardInput: nil,
-                         operation: operation,
-                         timeout: 15,
-                         stdoutLimit: VideoDownloaderEmbeddedDataParser.maximumJSONBytes + 1,
-                         stderrLimit: 128 * 1024,
-                         currentDirectory: mediaFile.deletingLastPathComponent())
-        if operation.wasCancelled { throw VideoDownloaderFailure.cancelled }
-        guard result.succeeded, !result.stdoutOverflow,
-              let inspection = VideoDownloaderEmbeddedDataParser.parse(result.stdout) else {
-            throw VideoDownloaderFailure.fileSafety
-        }
-        return inspection
-    }
-
-    private func verifyAndNormalizeMedia(in mediaFile: URL,
-                                         staging: URL,
-                                         request: VideoDownloaderRequest,
-                                         ffprobePath: String,
-                                         operation: VideoDownloaderProcessOperation,
-                                         suppressMissingSubtitleWarning: Bool = false)
-        throws -> (file: URL, warnings: [VideoDownloaderWarning]) {
-        let inspection = try embeddedMediaInspection(in: mediaFile,
-                                                     ffprobePath: ffprobePath,
-                                                     operation: operation)
-        if let failure = VideoDownloaderEmbeddedDataVerifier.failure(in: inspection, for: request) {
-            throw failure
-        }
-        guard let container = inspection.container else {
-            throw VideoDownloaderFailure.fileSafety
-        }
-        let normalized = try VideoDownloaderFileSupport.normalizeExtension(of: mediaFile,
-                                                                           in: staging,
-                                                                           for: container)
-        return (normalized, VideoDownloaderEmbeddedDataVerifier.warnings(in: inspection,
-                                                                          for: request,
-                                                                          includeSubtitleWarning: !suppressMissingSubtitleWarning))
-    }
-
-    private func embedSubtitle(in mediaFile: URL,
-                               subtitle: VideoDownloaderSubtitleTrack,
-                               staging: URL,
-                               ffmpegPath: String,
-                               operation: VideoDownloaderProcessOperation) throws -> URL {
-        let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(
-            at: staging,
-            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
-            options: []) else {
-            throw VideoDownloaderOptionalEmbedError.subtitle
-        }
-        let subtitles = enumerator.compactMap { $0 as? URL }.filter {
-            ["srt", "vtt"].contains($0.pathExtension.lowercased())
-                && VideoDownloaderFileSupport.isContained($0, in: staging)
-        }
-        guard subtitles.count == 1,
-              let size = try? subtitles[0].resourceValues(forKeys: [.fileSizeKey]).fileSize,
-              size > 0, size <= 8 * 1024 * 1024 else {
-            throw VideoDownloaderOptionalEmbedError.subtitle
-        }
-        let sidecar = subtitles[0]
-        let temporary = staging.appendingPathComponent(
-            ".vorssaint-subtitle-\(UUID().uuidString).\(mediaFile.pathExtension.lowercased())")
-        defer {
-            try? fileManager.removeItem(at: sidecar)
-            try? fileManager.removeItem(at: temporary)
-        }
-        let result = run(VideoDownloaderCommandBuilder.ffmpegSubtitle(
-            ffmpegPath: ffmpegPath,
-            input: mediaFile,
-            subtitle: sidecar,
-            output: temporary,
-            language: subtitle.code),
-                         standardInput: nil,
-                         operation: operation,
-                         timeout: timeoutPolicy.postProcessing,
-                         stdoutLimit: 64 * 1024,
-                         stderrLimit: 128 * 1024,
-                         currentDirectory: staging)
-        if operation.wasCancelled { throw VideoDownloaderFailure.cancelled }
-        guard result.succeeded,
-              VideoDownloaderFileSupport.isContained(temporary, in: staging),
-              let outputSize = try? temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-              outputSize > 0 else {
-            throw VideoDownloaderOptionalEmbedError.subtitle
-        }
-        _ = try fileManager.replaceItemAt(mediaFile, withItemAt: temporary,
-                                          backupItemName: nil, options: [])
-        return mediaFile
-    }
-
-    private func embedArtwork(in mediaFile: URL,
-                              thumbnailURL: URL,
-                              staging: URL,
-                              mode: VideoDownloaderOutputMode,
-                              ffmpegPath: String,
-                              operation: VideoDownloaderProcessOperation) throws -> URL {
-        guard VideoDownloaderThumbnailURLPolicy.sanitizedURL(thumbnailURL) != nil else {
-            throw VideoDownloaderOptionalEmbedError.artwork
-        }
-        guard let artworkData = artworkFetcher(thumbnailURL, 20, { operation.wasCancelled }) else {
-            throw operation.wasCancelled ? VideoDownloaderFailure.cancelled : VideoDownloaderOptionalEmbedError.artwork
-        }
-        let fileManager = FileManager.default
-        let artwork = staging.appendingPathComponent(".vorssaint-artwork-\(UUID().uuidString).jpg")
-        let temporary = staging.appendingPathComponent(
-            ".vorssaint-artwork-output-\(UUID().uuidString).\(mediaFile.pathExtension.lowercased())")
-        defer {
-            try? fileManager.removeItem(at: artwork)
-            try? fileManager.removeItem(at: temporary)
-        }
-        do {
-            try artworkData.write(to: artwork, options: [.atomic])
-        } catch {
-            throw VideoDownloaderOptionalEmbedError.artwork
-        }
-        let result = run(VideoDownloaderCommandBuilder.ffmpegArtwork(ffmpegPath: ffmpegPath,
-                                                                      input: mediaFile,
-                                                                      artwork: artwork,
-                                                                      output: temporary,
-                                                                      mode: mode),
-                         standardInput: nil,
-                         operation: operation,
-                         timeout: timeoutPolicy.postProcessing,
-                         stdoutLimit: 64 * 1024,
-                         stderrLimit: 128 * 1024,
-                         currentDirectory: staging)
-        if operation.wasCancelled { throw VideoDownloaderFailure.cancelled }
-        guard result.succeeded,
-              VideoDownloaderFileSupport.isContained(temporary, in: staging),
-              let outputSize = try? temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-              outputSize > 0 else { throw VideoDownloaderOptionalEmbedError.artwork }
-        _ = try fileManager.replaceItemAt(mediaFile, withItemAt: temporary,
-                                          backupItemName: nil, options: [])
-        return mediaFile
-    }
-
-    private struct ProcessResult {
-        let termination: VideoDownloaderProcessTermination
-        let stdout: Data
-        let stderr: Data
-        let stdoutOverflow: Bool
-
-        var didTimeOut: Bool {
-            if case .timedOut = termination { return true }
-            return false
-        }
-
-        var succeeded: Bool {
-            if case .exited(0) = termination { return true }
-            return false
-        }
+    private static func runPostProcessCommand(
+        _ command: VideoDownloaderToolCommand,
+        _ standardInput: Data?,
+        _ operation: VideoDownloaderProcessOperation,
+        _ timeout: TimeInterval?,
+        _ stdoutLimit: Int,
+        _ stderrLimit: Int,
+        _ currentDirectory: URL?
+    ) -> ProcessResult {
+        run(command,
+            standardInput: standardInput,
+            operation: operation,
+            timeout: timeout,
+            stdoutLimit: stdoutLimit,
+            stderrLimit: stderrLimit,
+            currentDirectory: currentDirectory)
     }
 
     private func run(_ command: VideoDownloaderToolCommand,
@@ -930,6 +756,26 @@ final class VideoDownloaderProcessService: VideoDownloaderProcessServicing {
                      currentDirectory: URL? = nil,
                      onStdout: ((Data) -> Void)? = nil,
                      onStderr: ((Data) -> Void)? = nil) -> ProcessResult {
+        Self.run(command,
+                 standardInput: standardInput,
+                 operation: operation,
+                 timeout: timeout,
+                 stdoutLimit: stdoutLimit,
+                 stderrLimit: stderrLimit,
+                 currentDirectory: currentDirectory,
+                 onStdout: onStdout,
+                 onStderr: onStderr)
+    }
+
+    static func run(_ command: VideoDownloaderToolCommand,
+                    standardInput: Data?,
+                    operation: VideoDownloaderProcessOperation,
+                    timeout: TimeInterval?,
+                    stdoutLimit: Int,
+                    stderrLimit: Int,
+                    currentDirectory: URL? = nil,
+                    onStdout: ((Data) -> Void)? = nil,
+                    onStderr: ((Data) -> Void)? = nil) -> ProcessResult {
         guard !operation.wasCancelled else {
             return ProcessResult(termination: .failedToStart, stdout: Data(), stderr: Data(),
                                  stdoutOverflow: false)
@@ -1100,7 +946,7 @@ final class VideoDownloaderProcessService: VideoDownloaderProcessServicing {
     }
 }
 
-private enum VideoDownloaderArtworkFetcher {
+enum VideoDownloaderArtworkFetcher {
     static func fetch(_ url: URL,
                       timeout: TimeInterval,
                       isCancelled: () -> Bool) -> Data? {
@@ -1274,7 +1120,7 @@ private final class VideoDownloaderDataBox {
     }
 }
 
-private final class VideoDownloaderProcessOperation {
+final class VideoDownloaderProcessOperation {
     private let condition = NSCondition()
     private var process: Process?
     private var cancelled = false

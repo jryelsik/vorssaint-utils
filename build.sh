@@ -112,7 +112,10 @@ if (( TEST )); then
     # spending minutes optimizing code that exits immediately.
     swiftc -Onone -D VORSSAINT_TEST -target "$TARGET" -sdk "$SDK" "${SDK_COMPAT_FLAGS[@]}" \
         Sources/Vorssaint/Services/Media/MediaSupport.swift \
+        Sources/Vorssaint/Services/VideoDownloader/VideoDownloaderModels.swift \
+        Sources/Vorssaint/Services/VideoDownloader/VideoDownloaderParsers.swift \
         Sources/Vorssaint/Services/VideoDownloader/VideoDownloaderSupport.swift \
+        Sources/Vorssaint/Services/VideoDownloader/VideoDownloaderPostProcessor.swift \
         Sources/Vorssaint/Services/VideoDownloader/VideoDownloaderProcessService.swift \
         Sources/Vorssaint/Services/VideoDownloader/VideoDownloaderWorkflow.swift \
         Sources/Vorssaint/UI/VideoDownloader/VideoDownloaderView.swift \
