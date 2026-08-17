@@ -121,7 +121,7 @@ private struct VideoDownloaderThumbnailView: View {
                 }
             }
         }
-        .frame(width: compact ? 94 : 132, height: compact ? 58 : 78)
+        .frame(width: compact ? 82 : 132, height: compact ? 52 : 78)
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .onAppear { loader.load() }
         .onDisappear { loader.cancel() }
@@ -178,7 +178,9 @@ struct PanelVideoDownloaderView: View {
 struct VideoDownloaderWorkspaceView: View {
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var workflow = VideoDownloaderWorkflow.shared
+    @Environment(\.colorScheme) private var colorScheme
     @FocusState private var sourceFieldFocused: Bool
+    @State private var advancedOptionsExpanded = false
     let compact: Bool
     var onClose: (() -> Void)? = nil
 
@@ -194,20 +196,7 @@ struct VideoDownloaderWorkspaceView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 10 : 14) {
             header
-            sourceCard
-            if let notice = workflow.inspectionNotice, workflow.phase == .ready {
-                inspectionNoticeView(notice)
-            }
-            if workflow.isInitialDependencyProbe || !workflow.missingTools.isEmpty
-                || workflow.phase == .settingUp || workflow.isCancellingSetup {
-                VideoDownloaderDependencyCard(alwaysShow: false)
-            }
-            if let media = workflow.media {
-                mediaDetails(media)
-                requestControls(media)
-            }
-            destinationRow
-            stateControls
+            flowSurface
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
@@ -216,6 +205,62 @@ struct VideoDownloaderWorkspaceView: View {
             DispatchQueue.main.async { sourceFieldFocused = true }
         }
         .animation(.easeInOut(duration: 0.18), value: workflow.phase)
+    }
+
+    private var flowSurface: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sourceSection
+
+            if let notice = workflow.inspectionNotice, workflow.phase == .ready {
+                flowDivider
+                inspectionNoticeView(notice)
+            }
+
+            if workflow.isInitialDependencyProbe || !workflow.missingTools.isEmpty
+                || workflow.phase == .settingUp || workflow.isCancellingSetup {
+                flowDivider
+                VideoDownloaderDependencyCard(alwaysShow: false)
+            }
+
+            if let media = workflow.media {
+                flowDivider
+                mediaSummary(media)
+                flowDivider
+                outputOptionsSection(media)
+            }
+
+            flowDivider
+            destinationSection
+            if shouldShowStateControls {
+                flowDivider
+                stateControls
+            }
+        }
+        .padding(compact ? 11 : 16)
+        .background(
+            RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous)
+                .fill(PanelSurface.cardFill(for: colorScheme))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous)
+                .strokeBorder(PanelSurface.border(for: colorScheme), lineWidth: 0.7)
+        )
+    }
+
+    private var flowDivider: some View {
+        Divider()
+            .padding(.vertical, compact ? 9 : 13)
+    }
+
+    private var shouldShowStateControls: Bool {
+        switch workflow.phase {
+        case .cancelling where workflow.isCancellingSetup, .inspecting, .settingUp:
+            return false
+        case .idle, .ready:
+            return !workflow.isInitialDependencyProbe && workflow.missingTools.isEmpty
+        default:
+            return true
+        }
     }
 
     private var header: some View {
@@ -236,10 +281,16 @@ struct VideoDownloaderWorkspaceView: View {
                     .accessibilityLabel(l10n.s.menuClose)
                 }
             }
+            if !compact {
+                Text(text.hubDescription)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
-    private var sourceCard: some View {
+    private var sourceSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "link")
@@ -299,7 +350,6 @@ struct VideoDownloaderWorkspaceView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelCard()
     }
 
     private func inspectionNoticeView(_ notice: VideoDownloaderFailure) -> some View {
@@ -325,10 +375,10 @@ struct VideoDownloaderWorkspaceView: View {
                 .accessibilityLabel(text.retry)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelCard()
+        .padding(.vertical, 1)
     }
 
-    private func mediaDetails(_ media: VideoDownloaderMedia) -> some View {
+    private func mediaSummary(_ media: VideoDownloaderMedia) -> some View {
         HStack(alignment: .top, spacing: 10) {
             if let thumbnailURL = media.thumbnailURL {
                 VideoDownloaderThumbnailView(url: thumbnailURL, compact: compact)
@@ -341,7 +391,7 @@ struct VideoDownloaderWorkspaceView: View {
                     Image(systemName: "photo")
                         .foregroundStyle(.tertiary)
                 }
-                .frame(width: compact ? 94 : 132, height: compact ? 58 : 78)
+                .frame(width: compact ? 82 : 132, height: compact ? 52 : 78)
                 .accessibilityLabel(text.thumbnail)
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -380,10 +430,9 @@ struct VideoDownloaderWorkspaceView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelCard()
     }
 
-    private func requestControls(_ media: VideoDownloaderMedia) -> some View {
+    private func outputOptionsSection(_ media: VideoDownloaderMedia) -> some View {
         let modeLabel = "\(text.video) / \(text.audio)"
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -433,33 +482,14 @@ struct VideoDownloaderWorkspaceView: View {
                     }
                 }
 
-                let subtitleOptions = media.subtitleOptions
-                HStack(spacing: 8) {
-                    Toggle(isOn: Binding(get: {
-                        workflow.subtitlesEnabled
-                    }, set: workflow.setSubtitlesEnabled)) {
-                        Label(text.subtitles, systemImage: "captions.bubble")
+                if !media.subtitleOptions.isEmpty {
+                    DisclosureGroup(isExpanded: $advancedOptionsExpanded) {
+                        subtitleOptionsSection(media)
+                    } label: {
+                        Label(text.advancedOptions,
+                              systemImage: "slider.horizontal.3")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                    }
-                    .toggleStyle(.switch)
-                    .disabled(controlsLocked || subtitleOptions.isEmpty)
-                    Spacer(minLength: 0)
-
-                    if subtitleOptions.isEmpty {
-                        Text(text.none)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        Picker(text.subtitles, selection: subtitleSelection) {
-                            ForEach(subtitleOptions) { track in
-                                Text(subtitleLabel(track)).tag(track.id)
-                            }
-                        }
-                        .labelsHidden()
-                        .accessibilityLabel(text.subtitles)
-                        .disabled(controlsLocked || !workflow.subtitlesEnabled)
-                        .opacity(workflow.subtitlesEnabled ? 1 : 0.55)
                     }
                 }
             }
@@ -472,10 +502,35 @@ struct VideoDownloaderWorkspaceView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelCard()
     }
 
-    private var destinationRow: some View {
+    private func subtitleOptionsSection(_ media: VideoDownloaderMedia) -> some View {
+        HStack(spacing: 8) {
+            Toggle(isOn: Binding(get: {
+                workflow.subtitlesEnabled
+            }, set: workflow.setSubtitlesEnabled)) {
+                Label(text.subtitles, systemImage: "captions.bubble")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .toggleStyle(.switch)
+            .disabled(controlsLocked || media.subtitleOptions.isEmpty)
+            Spacer(minLength: 0)
+
+            Picker(text.subtitles, selection: subtitleSelection) {
+                ForEach(media.subtitleOptions) { track in
+                    Text(subtitleLabel(track)).tag(track.id)
+                }
+            }
+            .labelsHidden()
+            .accessibilityLabel(text.subtitles)
+            .disabled(controlsLocked || !workflow.subtitlesEnabled)
+            .opacity(workflow.subtitlesEnabled ? 1 : 0.55)
+        }
+        .padding(.top, 3)
+    }
+
+    private var destinationSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Image(systemName: "folder")
@@ -512,7 +567,6 @@ struct VideoDownloaderWorkspaceView: View {
         }
         .help(workflow.destination.path)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelCard()
     }
 
     @ViewBuilder
@@ -532,7 +586,6 @@ struct VideoDownloaderWorkspaceView: View {
                 Button(text.retry) { workflow.retry() }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .panelCard()
         case .inspecting, .settingUp:
             EmptyView()
         case .idle, .ready:
@@ -586,7 +639,6 @@ struct VideoDownloaderWorkspaceView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelCard()
     }
 
     private var activeStatus: String {
@@ -631,7 +683,6 @@ struct VideoDownloaderWorkspaceView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelCard()
     }
 
     @ViewBuilder
@@ -668,7 +719,6 @@ struct VideoDownloaderWorkspaceView: View {
             Button(text.retry) { workflow.retry() }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelCard()
     }
 
     private var rateLimitHelpView: some View {
@@ -785,9 +835,7 @@ struct VideoDownloaderDependencyCard: View {
     }
 
     private var detailsForcedOpen: Bool {
-        workflow.isInitialDependencyProbe || !workflow.missingTools.isEmpty
-            || workflow.phase == .settingUp || workflow.isCancellingSetup
-            || workflow.terminalSetupPending
+        workflow.phase == .settingUp || workflow.isCancellingSetup
     }
 
     private var detailsBinding: Binding<Bool> {
@@ -806,21 +854,15 @@ struct VideoDownloaderDependencyCard: View {
 
     var body: some View {
         if shouldShowCard {
-            if alwaysShow {
+            VStack(alignment: .leading, spacing: 6) {
                 DisclosureGroup(isExpanded: detailsBinding) {
                     dependencyDetails
                 } label: {
                     dependencySummary
                 }
-                .panelCard()
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    dependencyHeader
-                    dependencyDetails
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .panelCard()
+                dependencyAction
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -843,17 +885,25 @@ struct VideoDownloaderDependencyCard: View {
         }
     }
 
-    private var dependencyHeader: some View {
-        HStack(spacing: 7) {
-            Label(text.dependencies, systemImage: "shippingbox")
-                .font(.system(size: 12, weight: .semibold))
-            Spacer(minLength: 0)
-            if workflow.isProbingDependencies && workflow.phase != .settingUp {
-                ProgressView()
-                    .controlSize(.small)
-                Text(text.checkingTools)
+    @ViewBuilder
+    private var dependencyAction: some View {
+        if workflow.terminalSetupPending {
+            Button(text.checkDependencies) { workflow.checkDependencies() }
+                .controlSize(.small)
+        } else if !workflow.missingTools.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(String(format: text.missingToolsFormat, missingToolNames))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button(VideoDownloaderDependencySupport.brewPath() == nil
+                       ? text.setUpDownloader : text.installMissingTools) {
+                    workflow.setupDependencies()
+                }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+                .disabled(!workflow.canSetupDependencies)
             }
         }
     }
@@ -878,9 +928,6 @@ struct VideoDownloaderDependencyCard: View {
                 }
             }
             if !workflow.missingTools.isEmpty {
-                Text(String(format: text.missingToolsFormat, missingToolNames))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Text(VideoDownloaderDependencySupport.brewPath() == nil
                      || workflow.terminalSetupPending
                      ? text.terminalSetupNote : text.brewSetupNote)
@@ -898,18 +945,9 @@ struct VideoDownloaderDependencyCard: View {
                         Button(text.cancel) { workflow.cancelActiveOperation() }
                     }
                 }
-            } else if workflow.terminalSetupPending {
-                Button(text.checkDependencies) { workflow.checkDependencies() }
-                    .buttonStyle(.borderedProminent)
-            } else if !workflow.missingTools.isEmpty {
-                Button(VideoDownloaderDependencySupport.brewPath() == nil
-                       ? text.setUpDownloader : text.installMissingTools) {
-                    workflow.setupDependencies()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!workflow.canSetupDependencies)
             }
         }
+        .padding(.top, 4)
     }
 }
 
@@ -923,6 +961,7 @@ struct VideoDownloaderSettings: View {
     @AppStorage(DefaultsKey.videoDownloaderEmbedChapters) private var chapters = true
     @AppStorage(DefaultsKey.videoDownloaderUseBrowserCookies) private var useBrowserCookies = false
     @AppStorage(DefaultsKey.videoDownloaderCookiesBrowser) private var cookiesBrowser = "safari"
+    @State private var advancedSettingsExpanded = false
     @State private var showCookieDetails = false
 
     private var text: VideoDownloaderStrings { FeatureStrings.videoDownloader(l10n.language) }
@@ -950,57 +989,67 @@ struct VideoDownloaderSettings: View {
                 }
             }
             Section {
-                Toggle(text.embedThumbnail, isOn: $thumbnail)
-                Toggle(text.embedMetadata, isOn: $metadata)
-                Toggle(text.embedChapters, isOn: $chapters)
-            }
-            Section {
-                Toggle(text.useCookies, isOn: $useBrowserCookies)
-                if useBrowserCookies {
-                    Picker(text.cookiesBrowser, selection: $cookiesBrowser) {
-                        ForEach(VideoDownloaderCookiesSupport.supportedBrowsers, id: \.self) { browser in
-                            Text(browser.capitalized).tag(browser)
-                        }
-                    }
-                    Text(text.cookiesNote)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    DisclosureGroup(isExpanded: $showCookieDetails) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(text.cookiesCaptchaNote)
+                DisclosureGroup(isExpanded: $advancedSettingsExpanded) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle(text.embedThumbnail, isOn: $thumbnail)
+                        Toggle(text.embedMetadata, isOn: $metadata)
+                        Toggle(text.embedChapters, isOn: $chapters)
+
+                        Divider()
+
+                        Toggle(text.useCookies, isOn: $useBrowserCookies)
+                        if useBrowserCookies {
+                            Picker(text.cookiesBrowser, selection: $cookiesBrowser) {
+                                ForEach(VideoDownloaderCookiesSupport.supportedBrowsers, id: \.self) { browser in
+                                    Text(browser.capitalized).tag(browser)
+                                }
+                            }
+                            Text(text.cookiesNote)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Link(text.faq,
-                                 destination: URL(string: "https://github.com/yt-dlp/yt-dlp/wiki/FAQ")!)
-                                .font(.caption)
-                            if !permissions.fullDiskAccess {
-                                FullDiskAccessNote(note: text.cookiesDiskAccessNote)
-                            } else {
-                                Label(text.cookiesDiskAccessNote,
-                                      systemImage: "checkmark.circle.fill")
+                            DisclosureGroup(isExpanded: $showCookieDetails) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(text.cookiesCaptchaNote)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Link(text.faq,
+                                         destination: URL(string: "https://github.com/yt-dlp/yt-dlp/wiki/FAQ")!)
+                                        .font(.caption)
+                                    if !permissions.fullDiskAccess {
+                                        FullDiskAccessNote(note: text.cookiesDiskAccessNote)
+                                    } else {
+                                        Label(text.cookiesDiskAccessNote,
+                                              systemImage: "checkmark.circle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.green)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            } label: {
+                                Text(showCookieDetails
+                                     ? l10n.s.homebrewOperationHideDetails
+                                     : l10n.s.homebrewOperationShowDetails)
                                     .font(.caption)
-                                    .foregroundStyle(.green)
-                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
-                    } label: {
-                        Text(showCookieDetails
-                             ? l10n.s.homebrewOperationHideDetails
-                             : l10n.s.homebrewOperationShowDetails)
+
+                        Divider()
+
+                        VideoDownloaderDependencyCard(alwaysShow: true)
+
+                        Divider()
+
+                        Text(text.usageNotice)
                             .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .padding(.vertical, 4)
+                } label: {
+                    Label(text.advancedOptions, systemImage: "slider.horizontal.3")
                 }
-            }
-            Section {
-                VideoDownloaderDependencyCard(alwaysShow: true)
-            }
-            Section {
-                Text(text.usageNotice)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .formStyle(.grouped)

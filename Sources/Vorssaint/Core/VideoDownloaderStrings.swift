@@ -40,6 +40,22 @@ struct VideoDownloaderStrings {
         case .zhTW, .zhHK: return "輸出與選項"
         }
     }
+    var advancedOptions: String {
+        switch language {
+        case .enUS: return "More options"
+        case .ptBR: return "Mais opções"
+        case .tr: return "Daha fazla seçenek"
+        case .ru: return "Дополнительные параметры"
+        case .es: return "Más opciones"
+        case .de: return "Weitere Optionen"
+        case .fr: return "Plus d’options"
+        case .it: return "Altre opzioni"
+        case .ja: return "その他のオプション"
+        case .ko: return "추가 옵션"
+        case .zhHans: return "更多选项"
+        case .zhTW, .zhHK: return "更多選項"
+        }
+    }
     var heightFormat: String { strings.videoDownloaderHeightFormat }
     var qualityFallbackFormat: String { strings.videoDownloaderQualityFallbackFormat }
     var subtitles: String { strings.videoDownloaderSubtitles }
@@ -257,6 +273,7 @@ struct VideoDownloaderStrings {
             strings.videoDownloaderAudio,
             strings.videoDownloaderQuality,
             outputOptions,
+            advancedOptions,
             strings.videoDownloaderHeightFormat,
             strings.videoDownloaderQualityFallbackFormat,
             strings.videoDownloaderSubtitles,
