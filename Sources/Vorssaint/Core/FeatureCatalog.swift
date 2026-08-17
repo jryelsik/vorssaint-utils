@@ -28,7 +28,7 @@ enum AppFeature: String, CaseIterable {
     // Tools
     case quickLauncher, quickToggles, colorPicker, screenOCR, cleaningMode, mediaTools,
          cleaner, uninstaller, homebrew, appUpdates, screenshot, cameraPreview, radialMenu, scratchpad,
-         commandBar, screenRecorder
+         commandBar, screenRecorder, killProcess
     // System monitor, one entry per metric family (temperatures live with
     // their parent metric: CPU temp with CPU, battery temp with power).
     case monitorCPU, monitorGPU, monitorMemory, monitorNetwork, monitorDisk, monitorPower, fanControl
@@ -62,7 +62,7 @@ extension AppFeature {
             return .energyDisplay
         case .quickLauncher, .quickToggles, .colorPicker, .screenOCR, .cleaningMode, .mediaTools,
              .cleaner, .uninstaller, .homebrew, .appUpdates, .screenshot, .cameraPreview, .radialMenu,
-             .scratchpad, .commandBar, .screenRecorder:
+             .scratchpad, .commandBar, .screenRecorder, .killProcess:
             return .tools
         case .monitorCPU, .monitorGPU, .monitorMemory, .monitorNetwork, .monitorDisk, .monitorPower,
              .fanControl:
@@ -116,6 +116,7 @@ extension AppFeature {
         case .radialMenu: return "circle.grid.cross"
         case .scratchpad: return "note.text"
         case .commandBar: return "command"
+        case .killProcess: return "xmark.octagon"
         case .monitorCPU: return "cpu"
         case .monitorGPU: return "rectangle.connected.to.line.below"
         case .monitorMemory: return "memorychip"
@@ -128,7 +129,7 @@ extension AppFeature {
 
     var availabilityKey: String { DefaultsKey.featureAvailable(rawValue) }
 
-    var isBeta: Bool { self == .fanControl }
+    var isBeta: Bool { self == .fanControl || self == .killProcess }
 
     /// Availability read straight from defaults. Existing features stay
     /// available on update; explicit beta opt-ins may start unavailable.
@@ -173,7 +174,7 @@ extension AppFeature {
         case .windowLayout, .diskImageInstaller, .mixer, .micMute, .keepAwake,
              .quickLauncher, .quickToggles, .colorPicker, .screenOCR, .cleaningMode, .mediaTools,
              .cleaner, .uninstaller, .homebrew, .appUpdates, .screenshot, .cameraPreview, .scratchpad,
-             .commandBar, .screenRecorder,
+             .commandBar, .screenRecorder, .killProcess,
              .monitorCPU, .monitorGPU, .monitorMemory, .monitorNetwork, .monitorDisk, .monitorPower,
              .fanControl:
             return []
@@ -218,7 +219,7 @@ extension AppFeature {
         case .clipboardHistory, .shelf, .urlCleaner,
              .soundOutputSwitcher, .musicBlock,
              .extraBrightness, .quickLauncher, .colorPicker, .micMute, .mediaTools,
-             .scratchpad, .monitorGPU, .monitorNetwork, .fanControl:
+             .scratchpad, .monitorGPU, .monitorNetwork, .fanControl, .killProcess:
             return []
         }
     }
@@ -245,7 +246,7 @@ extension AppFeature {
     /// features and explicit betas ship uninstalled.
     static var availabilityDefaults: [String: Any] {
         Dictionary(uniqueKeysWithValues: allCases.map {
-            ($0.availabilityKey, $0 != .fanControl && $0 != .diskImageInstaller)
+            ($0.availabilityKey, $0 != .fanControl && $0 != .diskImageInstaller && $0 != .killProcess)
         })
     }
 
