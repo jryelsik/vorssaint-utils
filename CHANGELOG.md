@@ -12,7 +12,7 @@ imported-video editing, local Command Bar scripts, recent captures, desktop
 window controls, formatted Scratchpad previews, edge-activated Shelf access and
 faster access to recording and maintenance tools. It also improves Clipboard
 access, Command Bar search and placement, capture, app discovery,
-conversions, volume, Shelf drop feedback, Switcher behavior, Settings
+conversions, volume, Shelf details, grouping and drop feedback, Switcher behavior, Settings
 reachability, menu bar sizing, setup screens, customizable Super key
 combinations, command-line setup, accidental middle clicks while typing and
 compatibility with older development tools.
@@ -99,6 +99,10 @@ compatibility with older development tools.
   and Escape to clear the selection. Thanks to @cimu233.
 - Shelf can now open when a dragged file reaches a screen edge. Enable it under
   Shelf. Thanks to @tenbux.
+- Shelf tiles now show their full name, file kind or content on hover, and scroll
+  newly added items into view. Thanks to @tenbux.
+- Shelf now groups every compatible item from one drop into a single pile,
+  including images, GIFs, links and text. Thanks to @tenbux.
 - The simple App Switcher now shows and cycles through individual windows without
   previews. Turn on Show one entry per app to group them.
 - The App Switcher now marks windows that are on another desktop.
