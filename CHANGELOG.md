@@ -42,6 +42,9 @@ compatibility with older development tools.
   optional shortcuts.
 - Emoji can open directly from a shortcut assigned to its Command Bar row.
   Thanks to @MaximilianMauroner.
+- Video Downloader downloads video as Apple-ready MP4/MKV or highest-quality M4A audio
+  from YouTube and supported media links, with resolution choice, subtitle embedding,
+  cover art and live progress. Thanks to @huseyinbal05.
 - The clipboard can now clear itself after a delay, and when the Mac sleeps, the
   display sleeps or the screen locks. Under Clipboard.
 - The Command Bar can now find files by name in the folders you name, through
