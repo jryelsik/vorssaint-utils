@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Vorssaint
 
-import Darwin
 import Foundation
 
 /// Keeps Homebrew changes in one lane. Browsing can continue, but installs,
@@ -412,21 +411,15 @@ enum HomebrewCommandBuilder {
         return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    static func shellEnvLine(brewPath: String,
-                             shellPath: String = HomebrewCommandBuilder.currentShellPath) -> String {
-        if URL(fileURLWithPath: shellPath).lastPathComponent == "fish" {
-            return "eval (\(shellQuote(brewPath)) shellenv fish)"
-        }
-        return #"eval "$(\#(shellQuote(brewPath)) shellenv)""#
+    static func shellEnvLine(brewPath: String) -> String {
+        #"eval "$(\#(brewPath) shellenv)""#
     }
 
     static func shellProfilePath(homeDirectory: String = NSHomeDirectory(),
-                                 shellPath: String = HomebrewCommandBuilder.currentShellPath) -> String {
+                                 shellPath: String = ProcessInfo.processInfo.environment["SHELL"] ?? "") -> String {
         switch URL(fileURLWithPath: shellPath).lastPathComponent {
         case "bash":
             return "\(homeDirectory)/.bash_profile"
-        case "fish":
-            return "\(homeDirectory)/.config/fish/config.fish"
         case "zsh":
             return "\(homeDirectory)/.zprofile"
         default:
@@ -435,10 +428,9 @@ enum HomebrewCommandBuilder {
     }
 
     static func shellProfilePathsToCheck(homeDirectory: String = NSHomeDirectory(),
-                                         shellPath: String = HomebrewCommandBuilder.currentShellPath) -> [String] {
+                                         shellPath: String = ProcessInfo.processInfo.environment["SHELL"] ?? "") -> [String] {
         let primary = shellProfilePath(homeDirectory: homeDirectory, shellPath: shellPath)
         let common = [
-            "\(homeDirectory)/.config/fish/config.fish",
             "\(homeDirectory)/.zprofile",
             "\(homeDirectory)/.zshrc",
             "\(homeDirectory)/.bash_profile",
@@ -454,20 +446,16 @@ enum HomebrewCommandBuilder {
 
     static func shellConfigCommand(brewPath: String,
                                    homeDirectory: String = NSHomeDirectory(),
-                                   shellPath: String = HomebrewCommandBuilder.currentShellPath) -> String {
+                                   shellPath: String = ProcessInfo.processInfo.environment["SHELL"] ?? "") -> String {
         let profile = shellProfilePath(homeDirectory: homeDirectory, shellPath: shellPath)
-        let profileDirectory = URL(fileURLWithPath: profile).deletingLastPathComponent().path
-        let line = shellEnvLine(brewPath: brewPath, shellPath: shellPath)
-        let setup = [
+        let line = shellEnvLine(brewPath: brewPath)
+        let brew = shellQuote(brewPath)
+        return [
             "PROFILE=\(shellQuote(profile))",
             "LINE=\(shellQuote(line))",
-            "/bin/mkdir -p \(shellQuote(profileDirectory))",
             #"/usr/bin/touch "$PROFILE""#,
             #"if /usr/bin/grep -qxF "$LINE" "$PROFILE" 2>/dev/null; then echo "Homebrew shell setup already exists in $PROFILE"; else { echo; echo "$LINE"; } >> "$PROFILE"; echo "Added Homebrew shell setup to $PROFILE"; fi"#,
-        ].joined(separator: "; ")
-        return [
-            "/bin/sh -c \(shellQuote(setup))",
-            line,
+            #"eval "$(\#(brew) shellenv)""#,
             "brew --version",
         ].joined(separator: "; ")
     }
