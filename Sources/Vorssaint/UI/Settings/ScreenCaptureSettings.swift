@@ -26,6 +26,37 @@ struct ScreenCaptureSettings: View {
         availableTools.contains(selectedTool) ? selectedTool : availableTools.first ?? .screenshot
     }
 
+    private var currentRole: GlobalShortcutRole {
+        if shortcutEnabled {
+            return .screenshot
+        }
+        switch currentTool {
+        case .screenshot: return .screenshot
+        case .recording: return .screenRecorder
+        case .text: return .screenOCR
+        case .color: return .colorPicker
+        }
+    }
+
+    private func screenCaptureConflict(for shortcut: GlobalShortcut, role: GlobalShortcutRole) -> String? {
+        let defaults = UserDefaults.standard
+        let isGlobal = defaults.bool(forKey: DefaultsKey.screenshotShortcutEnabled)
+        guard !isGlobal else { return nil }
+
+        let toolRoles: [(GlobalShortcutRole, AppFeature)] = [
+            (.screenshot, .screenshot),
+            (.screenRecorder, .screenRecorder),
+            (.screenOCR, .screenOCR),
+            (.colorPicker, .colorPicker)
+        ]
+        for (otherRole, feature) in toolRoles where otherRole != role && feature.isAvailable {
+            if otherRole.savedShortcut == shortcut {
+                return otherRole.title(l10n.s)
+            }
+        }
+        return nil
+    }
+
     var body: some View {
         Form {
             Section {
@@ -50,11 +81,15 @@ struct ScreenCaptureSettings: View {
                     .onChange(of: shortcutEnabled) { _, _ in
                         service.syncWithPreferences()
                     }
-                ShortcutPreferenceRow(role: .screenshot,
-                                      isEnabled: shortcutEnabled) {
+                ShortcutPreferenceRow(role: currentRole,
+                                      isEnabled: true,
+                                      additionalConflict: { shortcut in
+                                          screenCaptureConflict(for: shortcut, role: currentRole)
+                                      }) {
                     service.syncWithPreferences()
                 }
-                if shortcutEnabled, service.shortcutRegistrationFailed {
+                .id(currentRole.id)
+                if service.shortcutRegistrationFailed {
                     Text(l10n.s.shortcutUnavailable)
                         .font(.caption)
                         .foregroundStyle(.orange)
