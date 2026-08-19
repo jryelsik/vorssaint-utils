@@ -34,6 +34,9 @@ final class ScreenCaptureService: ObservableObject {
     @Published private(set) var shortcutRegistrationFailed = false
 
     private let hotkey = QuickToolHotkey(id: 15)
+    private let recorderHotkey = QuickToolHotkey(id: 25)
+    private let ocrHotkey = QuickToolHotkey(id: 26)
+    private let colorHotkey = QuickToolHotkey(id: 27)
     private var selection: ScreenshotSelectionController?
     private var options: ScreenCaptureSelectionOptions?
     private var countdown: DispatchWorkItem?
@@ -45,7 +48,30 @@ final class ScreenCaptureService: ObservableObject {
     }
 
     private init() {
-        hotkey.onPress = { [weak self] in self?.capture() }
+        hotkey.onPress = { [weak self] in
+            let defaults = UserDefaults.standard
+            let globalEnabled = defaults.bool(forKey: DefaultsKey.screenshotShortcutEnabled)
+            if globalEnabled {
+                self?.capture()
+            } else {
+                self?.capture(initial: .screenshot)
+            }
+        }
+        recorderHotkey.onPress = {
+            if AppFeature.screenRecorder.isAvailable {
+                ScreenRecorderService.shared.toggle()
+            }
+        }
+        ocrHotkey.onPress = {
+            if AppFeature.screenOCR.isAvailable {
+                ScreenTextService.shared.capture()
+            }
+        }
+        colorHotkey.onPress = {
+            if AppFeature.colorPicker.isAvailable {
+                ColorSamplerService.shared.pick()
+            }
+        }
     }
 
     func syncWithPreferences() {
@@ -53,6 +79,9 @@ final class ScreenCaptureService: ObservableObject {
         guard !availableTools.isEmpty else {
             shortcutRegistrationFailed = false
             hotkey.unregister()
+            recorderHotkey.unregister()
+            ocrHotkey.unregister()
+            colorHotkey.unregister()
             cancelSelection()
             return
         }
@@ -62,14 +91,68 @@ final class ScreenCaptureService: ObservableObject {
             cancelSelection()
         }
         let defaults = UserDefaults.standard
-        let enabled = defaults.bool(forKey: DefaultsKey.screenshotShortcutEnabled)
-        let shortcut = GlobalShortcut.saved(for: DefaultsKey.screenshotShortcut,
-                                            fallback: .screenshotDefault)
-        shortcutRegistrationFailed = !hotkey.sync(enabled: enabled, shortcut: shortcut)
+        let globalShortcutEnabled = defaults.bool(forKey: DefaultsKey.screenshotShortcutEnabled)
+
+        if globalShortcutEnabled {
+            recorderHotkey.unregister()
+            ocrHotkey.unregister()
+            colorHotkey.unregister()
+
+            let shortcut = GlobalShortcut.saved(for: DefaultsKey.screenshotShortcut,
+                                                fallback: .screenshotDefault)
+            shortcutRegistrationFailed = !hotkey.sync(enabled: true, shortcut: shortcut)
+        } else {
+            var registrationFailed = false
+
+            if AppFeature.screenshot.isAvailable {
+                let screenshot = GlobalShortcut.saved(for: DefaultsKey.screenshotShortcut,
+                                                      fallback: .screenshotDefault)
+                if !hotkey.sync(enabled: true, shortcut: screenshot) {
+                    registrationFailed = true
+                }
+            } else {
+                hotkey.unregister()
+            }
+
+            if AppFeature.screenRecorder.isAvailable {
+                let recording = GlobalShortcut.saved(for: DefaultsKey.recorderShortcut,
+                                                     fallback: .screenRecorderDefault)
+                if !recorderHotkey.sync(enabled: true, shortcut: recording) {
+                    registrationFailed = true
+                }
+            } else {
+                recorderHotkey.unregister()
+            }
+
+            if AppFeature.screenOCR.isAvailable {
+                let ocr = GlobalShortcut.saved(for: DefaultsKey.screenOCRShortcut,
+                                               fallback: .screenOCRDefault)
+                if !ocrHotkey.sync(enabled: true, shortcut: ocr) {
+                    registrationFailed = true
+                }
+            } else {
+                ocrHotkey.unregister()
+            }
+
+            if AppFeature.colorPicker.isAvailable {
+                let color = GlobalShortcut.saved(for: DefaultsKey.colorPickerShortcut,
+                                                 fallback: .colorPickerDefault)
+                if !colorHotkey.sync(enabled: true, shortcut: color) {
+                    registrationFailed = true
+                }
+            } else {
+                colorHotkey.unregister()
+            }
+
+            shortcutRegistrationFailed = registrationFailed
+        }
     }
 
     func suspend() {
         hotkey.unregister()
+        recorderHotkey.unregister()
+        ocrHotkey.unregister()
+        colorHotkey.unregister()
         cancelSelection()
     }
 
