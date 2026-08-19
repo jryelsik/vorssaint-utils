@@ -1680,8 +1680,8 @@ struct MetricsTests {
                "space travel is never suggested toward an unknown Space")
         expect(SpaceHopSupport.arrowSteps(orderedSpacesPerDisplay: [[3, 4], [8, 9]],
                                           visibleSpaces: [3, 8],
-                                          target: 9) == nil,
-               "space travel is never replayed with several displays (the shortcut moves the focused one)")
+                                          target: 9) == 1,
+               "space travel counts the presses on the target display when multiple displays exist")
         expect(SpaceHopSupport.arrowSteps(orderedSpacesPerDisplay: [(0...40).map { UInt64($0) }],
                                           visibleSpaces: [0],
                                           target: 40) == nil,
