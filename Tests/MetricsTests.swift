@@ -2080,13 +2080,13 @@ struct MetricsTests {
                "update showcase intro starts unseen")
         expect(registeredDefaults[DefaultsKey.updateShowcaseMediaOverride] as? String == "",
                "update showcase media override is empty by default")
-        expect(SupportUpdateIntroInfo.releaseVersion == "3.3.0",
-               "support prompt is deliberately pinned to 3.3.0")
-        expect(SupportUpdateIntroInfo.shouldShow(appVersion: "3.3.0", lastSeenVersion: "3.2.0"),
+        expect(SupportUpdateIntroInfo.releaseVersion == "3.3.2",
+               "support prompt is deliberately pinned to 3.3.2")
+        expect(SupportUpdateIntroInfo.shouldShow(appVersion: "3.3.2", lastSeenVersion: "3.3.1"),
                "support prompt shows once after updating to its pinned release")
-        expect(!SupportUpdateIntroInfo.shouldShow(appVersion: "3.3.0", lastSeenVersion: "3.3.0"),
+        expect(!SupportUpdateIntroInfo.shouldShow(appVersion: "3.3.2", lastSeenVersion: "3.3.2"),
                "support prompt stays hidden after it is seen")
-        expect(!SupportUpdateIntroInfo.shouldShow(appVersion: "3.2.0", lastSeenVersion: nil)
+        expect(!SupportUpdateIntroInfo.shouldShow(appVersion: "3.3.0", lastSeenVersion: nil)
                && !SupportUpdateIntroInfo.shouldShow(appVersion: "3.3.1", lastSeenVersion: nil),
                "support prompt never leaks into another release")
         expect(SupportUpdateIntroStep.community.next == .support
@@ -2106,8 +2106,8 @@ struct MetricsTests {
         let plistBuild = (releasePlist?["CFBundleVersion"] as? String) ?? ""
         expect(plistBuild == "78",
                "every app version needs its own incremented bundle build")
-        expect(SupportUpdateIntroInfo.releaseVersion == "3.3.0",
-               "3.3.0 shows the deliberately curated community and support intro")
+        expect(SupportUpdateIntroInfo.releaseVersion == "3.3.2",
+               "3.3.2 shows the deliberately curated community and support intro")
         // 3.3.1 adds several headline features, so the tour is re-curated
         // around only what this update genuinely introduces.
         expect(UpdateHighlightsInfo.releaseVersion == "3.3.1",
