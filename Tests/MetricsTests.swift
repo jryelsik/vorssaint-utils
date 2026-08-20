@@ -2108,18 +2108,21 @@ struct MetricsTests {
                "every app version needs its own incremented bundle build")
         expect(SupportUpdateIntroInfo.releaseVersion == "3.3.2",
                "3.3.2 shows the deliberately curated community and support intro")
-        // 3.3.1 adds several headline features, so the tour is re-curated
+        // 3.3.2 adds several headline features, so the tour is re-curated
         // around only what this update genuinely introduces.
-        expect(UpdateHighlightsInfo.releaseVersion == "3.3.1",
+        expect(UpdateHighlightsInfo.releaseVersion == "3.3.2",
                "re-decide the highlights tour on a feature release: re-curate its rows and move the pin to the shipping version")
-        expect(UpdateHighlightsInfo.shouldShow(appVersion: "3.3.1", lastSeenVersion: "3.3.0")
-               && UpdateHighlightsInfo.shouldShow(appVersion: "3.3.1", lastSeenVersion: nil),
+        expect(UpdateHighlightsInfo.shouldShow(appVersion: "3.3.2", lastSeenVersion: "3.3.1")
+               && UpdateHighlightsInfo.shouldShow(appVersion: "3.3.2", lastSeenVersion: nil),
                "highlights tour shows once after updating to its pinned release")
-        expect(!UpdateHighlightsInfo.shouldShow(appVersion: "3.3.1", lastSeenVersion: "3.3.1"),
+        expect(!UpdateHighlightsInfo.shouldShow(appVersion: "3.3.2", lastSeenVersion: "3.3.2"),
                "highlights tour stays hidden after it is seen")
-        expect(!UpdateHighlightsInfo.shouldShow(appVersion: "3.3.0", lastSeenVersion: nil)
-               && !UpdateHighlightsInfo.shouldShow(appVersion: "3.3.2", lastSeenVersion: nil),
+        expect(!UpdateHighlightsInfo.shouldShow(appVersion: "3.3.1", lastSeenVersion: nil)
+               && !UpdateHighlightsInfo.shouldShow(appVersion: "3.3.3", lastSeenVersion: nil),
                "highlights tour never leaks into another release")
+        expect(FileManager.default.fileExists(atPath: "Resources/Images/highlights-capture.png")
+               && FileManager.default.fileExists(atPath: "Resources/Images/highlights-clipboard.png"),
+               "3.3.2 highlights tour includes curated real captures for screenshot palette and clipboard")
         expect(registeredDefaults[DefaultsKey.mixerLowerVolumeOnHeadphonesDisconnect] as? Bool == false,
                "headphone disconnect volume lowering is opt-in")
         expect(registeredDefaults[DefaultsKey.mixerHeadphonesDisconnectVolumePercent] as? Int
@@ -8398,11 +8401,15 @@ struct MetricsTests {
                                 strings.qrResultTitle, strings.qrResultCopy, strings.qrResultOpen]
             expect(ocrQRStrings.allSatisfy { !$0.isEmpty && !$0.contains("—") },
                    "\(prefix) screen QR strings are present without em dash")
-            let highlightsStrings = [strings.highlightsTitle, strings.highlightsCaptionDockPreview,
+            let highlightsStrings = [strings.highlightsTitle, strings.highlightsTitleClipboardRedesign,
+                                     strings.highlightsCaptionDockPreview,
                                      strings.highlightsCaptionScreenshot,
                                      strings.highlightsCaptionSnippetLibrary,
+                                     strings.highlightsCaptionCapturePalette,
+                                     strings.highlightsCaptionClipboardRedesign,
                                      strings.highlightsConfigure,
-                                     strings.highlightsTry, strings.highlightsSeeAll]
+                                     strings.highlightsTry, strings.highlightsSeeAll,
+                                     strings.reviewIntro, strings.reviewHighlights]
             expect(highlightsStrings.allSatisfy { !$0.isEmpty && !$0.contains("—") },
                    "\(prefix) update highlights strings are present without em dash")
             let officialHomebrewIntroStrings = [
