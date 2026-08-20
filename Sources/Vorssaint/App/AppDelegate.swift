@@ -1530,7 +1530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         ))
         host.sizingOptions = .preferredContentSize
         let window = NSWindow(contentViewController: host)
-        window.title = L10n.shared.s.communityIntroTitle
+        window.title = L10n.shared.s.discordIntroTitle
         window.styleMask = [.titled, .fullSizeContentView]
         window.standardWindowButton(.closeButton)?.isHidden = true
         window.titlebarAppearsTransparent = true

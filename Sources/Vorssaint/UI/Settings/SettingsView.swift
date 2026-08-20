@@ -1234,95 +1234,159 @@ struct ReleaseNotesSettings: View {
     }
 }
 
-// MARK: - Support / donate
+// MARK: - Support and community
 
-/// A calm, visual page inviting people to support the project. Nothing is
-/// nagged or gated: the message and a single button that opens the sponsors
-/// page in the browser.
 struct SupportSettings: View {
     @ObservedObject private var l10n = L10n.shared
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            ZStack {
-                Circle()
-                    .fill(Theme.spaceGradient)
-                    .frame(width: 84, height: 84)
-                Image(systemName: "heart.fill")
-                    .font(.system(size: 31))
-                    .foregroundStyle(.white)
-            }
-            Text(l10n.s.donateHeading)
-                .font(.title2.bold())
-            Text(l10n.s.donateMessage)
-                .font(.system(size: 12.5))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-            VStack(spacing: 10) {
-                SponsorButton()
-                CoffeeLink()
-            }
-            .padding(.top, 4)
-            Text(l10n.s.donateThanks)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-/// The call to action for the Support page. Opens the sponsors page in the
-/// default browser. The pink heart is the mark the sponsors page itself uses,
-/// so the button looks like where it lands, and white on it holds its contrast
-/// in both themes.
-struct SponsorButton: View {
-    @ObservedObject private var l10n = L10n.shared
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        Button {
-            openURL(AppInfo.donateURL)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "heart.fill").font(.system(size: 13))
-                Text(l10n.s.donateButton)
-                    .font(.system(size: 14, weight: .semibold))
+        ScrollView {
+            VStack(spacing: 18) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.spaceGradient)
+                        .frame(width: 78, height: 78)
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 29, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+
+                VStack(spacing: 7) {
+                    Text(l10n.s.donateHeading)
+                        .font(.title2.bold())
+                        .multilineTextAlignment(.center)
+                    Text(l10n.s.donateMessage)
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 460)
+                }
+
+                Button {
+                    openURL(AppInfo.coffeeURL)
+                } label: {
+                    Label(l10n.s.donateButton, systemImage: "cup.and.saucer.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+                HStack(alignment: .top, spacing: 14) {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.yellow)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(Color.yellow.opacity(0.14)))
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(l10n.s.supportIntroStarMessage)
+                            .font(.system(size: 13.5, weight: .medium))
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Button {
+                            openURL(AppInfo.repositoryURL)
+                        } label: {
+                            Label(l10n.s.supportIntroStarButton, systemImage: "star.fill")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(16)
+                .frame(maxWidth: 510)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45))
+                )
+
+                HStack(alignment: .top, spacing: 14) {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 38, height: 38)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color(red: 0.35, green: 0.40, blue: 0.94))
+                        )
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(l10n.s.discordIntroTitle)
+                            .font(.headline)
+                        Text(l10n.s.discordIntroMessage)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        communityActions
+                            .padding(.top, 3)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(16)
+                .frame(maxWidth: 510)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45))
+                )
+
+                Text(l10n.s.donateThanks)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 11)
-            .background(Capsule().fill(Color(red: 0.86, green: 0.38, blue: 0.64)))
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 26)
         }
-        .buttonStyle(.plain)
     }
-}
 
-/// The other way to give, for the people who already give that way. Small and
-/// tertiary on purpose: it sits under the main button as an alternative, never
-/// as a second thing to weigh. The name is the same in every language, so it
-/// carries no string of its own.
-struct CoffeeLink: View {
-    @Environment(\.openURL) private var openURL
-    @State private var isHovering = false
-
-    var body: some View {
-        Button {
-            openURL(AppInfo.coffeeURL)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "cup.and.saucer")
-                Text("Buy me a coffee")
-                    .underline(isHovering)
+    private var communityActions: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 9) {
+                discordButton
+                socialButton
             }
-            .font(.system(size: 11.5))
-            .foregroundStyle(isHovering ? Color.secondary : Color(nsColor: .tertiaryLabelColor))
+            VStack(alignment: .leading, spacing: 8) {
+                discordButton
+                socialButton
+            }
         }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovering)
+    }
+
+    private var discordButton: some View {
+        Button {
+            openURL(AppInfo.discordURL)
+        } label: {
+            Label(l10n.s.discordIntroJoinButton,
+                  systemImage: "bubble.left.and.bubble.right.fill")
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .tint(Color(red: 0.35, green: 0.40, blue: 0.94))
+    }
+
+    private var socialButton: some View {
+        Button {
+            openURL(AppInfo.socialURL)
+        } label: {
+            HStack(spacing: 7) {
+                XLogoShape()
+                    .fill(Color.primary, style: FillStyle(eoFill: true))
+                    .frame(width: 12, height: 12)
+                Text(l10n.s.communityIntroFollowButton)
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 }
 

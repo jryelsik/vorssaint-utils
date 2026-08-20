@@ -9,8 +9,8 @@ All notable changes to this project are documented here. The format follows
 ### Summary
 Vorssaint 3.3.2 brings one place for screen capture, batch image conversion,
 local Command Bar scripts, recent captures, imported-video editing, formatted
-Scratchpad previews, swap use and pointer-driven window focus. It also cuts background
-energy use and improves
+Scratchpad previews, swap use and pointer-driven window focus. It also opens a new
+Discord community, cuts background energy use and improves
 scrolling screenshots, Clipboard, Shelf, Switcher, window controls, audio, displays,
 Fan Control, Settings and app maintenance.
 
@@ -39,6 +39,8 @@ Fan Control, Settings and app maintenance.
   can open maintenance tools directly.
 - The System panel now shows swap memory in use below the memory reading.
   Thanks to @veniaminMedanov.
+- A new Discord community brings help, shared workflows, bug reports, feedback,
+  early previews and release news together while the community takes shape.
 
 ### Changed
 - Monitor settings no longer leave system sensors sampling after the window closes;

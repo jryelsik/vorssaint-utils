@@ -19,7 +19,8 @@
   <a href="#private-by-default">Privacy</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="mailto:hello@vorssaint.com">Contact</a> ·
-  <a href="https://github.com/sponsors/vorssaint">Sponsor</a>
+  <a href="https://discord.gg/M6BwWH4BJp">Discord</a> ·
+  <a href="https://buymeacoffee.com/vorssaint">Buy Me a Coffee</a>
 </p>
 
 <p align="center">
@@ -31,7 +32,8 @@
 </p>
 
 <p align="center">
-  For questions, feature requests, feedback, partnerships, sponsorships, or just to say hi,
+  <a href="https://discord.gg/M6BwWH4BJp"><strong>Join the Vorssaint community on Discord</strong></a><br>
+  For questions, feature requests, feedback, partnerships, or just to say hi,
   <a href="mailto:hello@vorssaint.com"><strong>hello@vorssaint.com</strong></a>
 </p>
 
@@ -219,7 +221,7 @@ The [troubleshooting guide](docs/TROUBLESHOOTING.md) walks through the common ca
 
 ## Community
 
-Vorssaint went from first commit to the front of GitHub trending in three days, top of the Swift charts, and issues and pull requests have shaped every release since. Bug reports, feature ideas and translations are all welcome, starting from the [contributing guide](CONTRIBUTING.md).
+Vorssaint went from first commit to the front of GitHub trending in three days, top of the Swift charts, and issues and pull requests have shaped every release since. Join the new [Discord community](https://discord.gg/M6BwWH4BJp) for help, shared workflows, early previews and feedback, or start with the [contributing guide](CONTRIBUTING.md).
 
 Vorssaint is free and will stay that way. If it earned its place in your menu bar, a star helps other people find it, and a [coffee](https://buymeacoffee.com/vorssaint) keeps the maintainer awake, with or without the Keep awake feature.
 

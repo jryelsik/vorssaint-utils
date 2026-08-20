@@ -2117,12 +2117,22 @@ struct MetricsTests {
         expect(!SupportUpdateIntroInfo.shouldShow(appVersion: "3.3.0", lastSeenVersion: nil)
                && !SupportUpdateIntroInfo.shouldShow(appVersion: "3.3.1", lastSeenVersion: nil),
                "support prompt never leaks into another release")
-        expect(SupportUpdateIntroStep.community.next == .support
+        expect(SupportUpdateIntroStep.discord.next == .social
+               && SupportUpdateIntroStep.social.next == .support
                && SupportUpdateIntroStep.support.next == nil,
-               "update intro moves from community to support")
-        expect(SupportUpdateIntroStep.community.previous == nil
-               && SupportUpdateIntroStep.support.previous == .community,
+               "update intro moves from Discord to social updates and support")
+        expect(SupportUpdateIntroStep.discord.previous == nil
+               && SupportUpdateIntroStep.social.previous == .discord
+               && SupportUpdateIntroStep.support.previous == .social,
                "update intro navigates back without closing")
+        expect(SupportUpdateIntroStep.allCases == [.discord, .social, .support],
+               "update intro page indicators follow the navigation order")
+        expect(AppInfo.discordURL.absoluteString == "https://discord.gg/M6BwWH4BJp",
+               "the community action uses the permanent Discord invitation")
+        expect(AppInfo.coffeeURL.absoluteString == "https://buymeacoffee.com/vorssaint",
+               "financial support uses Buy Me a Coffee")
+        expect(AppInfo.socialURL.absoluteString == "https://x.com/vorssaint",
+               "social previews keep the official X profile")
         // AppInfo.version falls back to "dev" in this bare harness, so read
         // the plist the shipped app will actually carry. The pin is a
         // per-release decision: this check fails on every version bump so the
@@ -8453,6 +8463,35 @@ struct MetricsTests {
                    "\(prefix) official Homebrew intro is complete")
             expect(officialHomebrewIntroStrings.allSatisfy { !$0.contains("—") },
                    "\(prefix) official Homebrew intro has no em dash")
+            let supportCommunityStrings = [
+                strings.donateHeading,
+                strings.donateMessage,
+                strings.donateButton,
+                strings.supportIntroTitle,
+                strings.supportIntroMessage,
+                strings.supportIntroStarButton,
+                strings.supportIntroStarMessage,
+                strings.supportIntroCoffeeButton,
+                strings.discordIntroTitle,
+                strings.discordIntroMessage,
+                strings.discordIntroBenefitHelp,
+                strings.discordIntroBenefitFeedback,
+                strings.discordIntroBenefitPreviews,
+                strings.discordIntroJoinButton,
+                strings.communityIntroTitle,
+                strings.communityIntroMessage,
+                strings.communityIntroFollowButton,
+            ]
+            expect(supportCommunityStrings.allSatisfy { !$0.isEmpty && !$0.contains("—") },
+                   "\(prefix) support and community strings are complete without em dash")
+            expect(strings.donateButton.contains("Buy Me a Coffee")
+                   && strings.supportIntroCoffeeButton.contains("Buy Me a Coffee"),
+                   "\(prefix) financial support points only to Buy Me a Coffee")
+            expect(strings.supportIntroStarMessage.localizedCaseInsensitiveContains("GitHub")
+                   && strings.discordIntroJoinButton.localizedCaseInsensitiveContains("Discord"),
+                   "\(prefix) non-financial support and community actions name their destinations")
+            expect(strings.discordIntroMessage.count <= 320,
+                   "\(prefix) Discord introduction stays concise")
             expect(!strings.communityIntroMessage.isEmpty
                    && strings.communityIntroMessage.contains("X"),
                    "\(prefix) community intro invites users to follow previews on X")
@@ -8467,6 +8506,15 @@ struct MetricsTests {
             expect(!strings.communityIntroMessage.contains("—")
                    && strings.communityIntroMessage.count <= 320,
                    "\(prefix) community intro stays concise and has no em dash")
+            if language == .enUS {
+                expect(strings.discordIntroMessage.contains("new")
+                       && strings.discordIntroMessage.contains("still being built"),
+                       "English Discord introduction says the community is new and in development")
+            } else if language == .ptBR {
+                expect(strings.discordIntroMessage.contains("nova")
+                       && strings.discordIntroMessage.contains("em desenvolvimento"),
+                       "Portuguese Discord introduction says the community is new and in development")
+            }
             expect(!strings.updateShowcaseTitle.isEmpty, "\(prefix) update showcase title is present")
             expect(!strings.updateShowcaseMessage.isEmpty, "\(prefix) update showcase message is present")
             expect(!strings.updateShowcaseUnavailable.isEmpty, "\(prefix) update showcase fallback is present")

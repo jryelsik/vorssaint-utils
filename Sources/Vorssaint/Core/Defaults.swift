@@ -584,21 +584,24 @@ enum SupportUpdateIntroInfo {
     }
 }
 
-enum SupportUpdateIntroStep: Equatable {
-    case community
+enum SupportUpdateIntroStep: CaseIterable, Hashable {
+    case discord
+    case social
     case support
 
     var next: SupportUpdateIntroStep? {
         switch self {
-        case .community: return .support
+        case .discord: return .social
+        case .social: return .support
         case .support: return nil
         }
     }
 
     var previous: SupportUpdateIntroStep? {
         switch self {
-        case .community: return nil
-        case .support: return .community
+        case .discord: return nil
+        case .social: return .discord
+        case .support: return .social
         }
     }
 }

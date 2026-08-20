@@ -928,9 +928,16 @@ struct Strings {
     let supportIntroTitle: String
     let supportIntroMessage: String
     let supportIntroStarButton: String
-    let supportIntroSponsorButton: String
+    let supportIntroStarMessage: String
+    let supportIntroCoffeeButton: String
     let supportIntroLaterButton: String
     let supportIntroDoneButton: String
+    let discordIntroTitle: String
+    let discordIntroMessage: String
+    let discordIntroBenefitHelp: String
+    let discordIntroBenefitFeedback: String
+    let discordIntroBenefitPreviews: String
+    let discordIntroJoinButton: String
     let communityIntroTitle: String
     let communityIntroMessage: String
     let communityIntroFollowButton: String
@@ -1849,16 +1856,23 @@ extension Strings {
         shortcutsPageCaption: "Edite aqui todos os atalhos globais dos recursos instalados neste Mac. Os inativos continuam salvos, mas não funcionam.",
         shortcutsPageTitle: "Atalhos de teclado",
         settingsSearchPlaceholder: "Buscar ajustes",
-        donateHeading: "Apoie o Vorssaint",
-        donateMessage: "Todos os meus projetos públicos são, e sempre serão, totalmente gratuitos: sem assinatura, sem anúncios. O apoio da comunidade é a única forma de manter tudo vivo. Se o Vorssaint te ajuda, virar apoiador no GitHub faz diferença de verdade.",
-        donateButton: "Apoiar no GitHub",
+        donateHeading: "Ajude o Vorssaint a continuar crescendo",
+        donateMessage: "O Vorssaint é gratuito, independente e desenvolvido no meu tempo livre. Se você quiser contribuir financeiramente, o Buy Me a Coffee ajuda diretamente a manter o desenvolvimento avançando.",
+        donateButton: "Apoiar no Buy Me a Coffee",
         donateThanks: "Obrigado por estar aqui. 🖤",
-        supportIntroTitle: "O Vorssaint é 100% gratuito e sempre será",
-        supportIntroMessage: "Eu sigo cuidando do app no meu tempo livre. Se ele te ajuda, você pode me ajudar de um jeito simples, divulgando, deixando uma estrela no GitHub ou virando apoiador por lá. Isso me ajuda muito a continuar trazendo melhorias.",
-        supportIntroStarButton: "Dar uma estrela",
-        supportIntroSponsorButton: "Apoiar no GitHub",
+        supportIntroTitle: "Ajude o Vorssaint a continuar crescendo",
+        supportIntroMessage: "Se você quiser apoiar financeiramente o desenvolvimento, o Buy Me a Coffee é o único lugar para fazer isso.",
+        supportIntroStarButton: "Dar uma estrela no GitHub",
+        supportIntroStarMessage: "Apoio financeiro nunca é esperado. Dar uma estrela no GitHub ajuda mais pessoas a encontrar o Vorssaint e faz uma diferença enorme no desenvolvimento.",
+        supportIntroCoffeeButton: "Apoiar no Buy Me a Coffee",
         supportIntroLaterButton: "Agora não",
         supportIntroDoneButton: "Concluir",
+        discordIntroTitle: "A comunidade do Vorssaint está começando",
+        discordIntroMessage: "A comunidade do Vorssaint é nova e ainda está em desenvolvimento. Entre desde o começo para conhecer outros usuários e ajudar a construir um espaço acolhedor em torno do app.",
+        discordIntroBenefitHelp: "Tire dúvidas e compartilhe fluxos de trabalho",
+        discordIntroBenefitFeedback: "Relate bugs, peça melhorias e ajude a decidir o que vem depois",
+        discordIntroBenefitPreviews: "Acompanhe o desenvolvimento, prévias e novidades de versões",
+        discordIntroJoinButton: "Entrar na comunidade no Discord",
         communityIntroTitle: "Vem ver antes de todo mundo",
         communityIntroMessage: "Quem já me seguia no X viu várias novidades desta atualização antes de todo mundo. Lá eu posto prévias do que vem depois e mostro como funciona, para você já saber o básico antes mesmo da atualização sair. Segue lá e veja o que vem depois!",
         communityIntroFollowButton: "Seguir @vorssaint no X",
@@ -2772,16 +2786,23 @@ extension Strings {
         shortcutsPageCaption: "Edit every global shortcut from the features installed on this Mac. Inactive shortcuts stay saved but do not run.",
         shortcutsPageTitle: "Keyboard shortcuts",
         settingsSearchPlaceholder: "Search settings",
-        donateHeading: "Support Vorssaint",
-        donateMessage: "Every one of my public projects is, and always will be, completely free: no subscription, no ads. Community support is the only thing that keeps it alive. If Vorssaint helps you, becoming a sponsor on GitHub genuinely makes a difference.",
-        donateButton: "Sponsor on GitHub",
+        donateHeading: "Help Vorssaint keep growing",
+        donateMessage: "Vorssaint is free, independent and built in my spare time. If you would like to contribute financially, Buy Me a Coffee directly helps me keep development moving forward.",
+        donateButton: "Support on Buy Me a Coffee",
         donateThanks: "Thank you for being here. 🖤",
-        supportIntroTitle: "Vorssaint is 100% free and always will be",
-        supportIntroMessage: "I keep taking care of the app in my free time. If it helps you, you can help me in a simple way by sharing it, leaving a star on GitHub or sponsoring me there. It helps me a lot to keep improving it.",
-        supportIntroStarButton: "Leave a star",
-        supportIntroSponsorButton: "Sponsor on GitHub",
+        supportIntroTitle: "Help Vorssaint keep growing",
+        supportIntroMessage: "If you would like to support development financially, Buy Me a Coffee is the one place to do it.",
+        supportIntroStarButton: "Star Vorssaint on GitHub",
+        supportIntroStarMessage: "Financial support is never expected. A star on GitHub helps more people discover Vorssaint and makes a real difference to its development.",
+        supportIntroCoffeeButton: "Support on Buy Me a Coffee",
         supportIntroLaterButton: "Not now",
         supportIntroDoneButton: "Done",
+        discordIntroTitle: "The Vorssaint community is just getting started",
+        discordIntroMessage: "The Vorssaint community is new and still being built. Join early to meet other users and help build a welcoming space around the app.",
+        discordIntroBenefitHelp: "Get help and share workflows",
+        discordIntroBenefitFeedback: "Report bugs, request improvements and shape what comes next",
+        discordIntroBenefitPreviews: "See work in progress, early previews and release news",
+        discordIntroJoinButton: "Join the Discord community",
         communityIntroTitle: "See it before everyone else",
         communityIntroMessage: "People who already followed me on X saw several changes in this update before anyone else. I post previews of what is coming and show how it works, so you already know the basics before the update ships. Follow along and see what comes next!",
         communityIntroFollowButton: "Follow @vorssaint on X",
