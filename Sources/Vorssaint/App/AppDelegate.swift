@@ -1413,7 +1413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         return true
     }
 
-    func showUpdateHighlights() {
+    func showUpdateHighlights(includeSupportIntro: Bool = false) {
         closePopover()
         if let window = updateHighlightsWindow {
             NSApp.activate(ignoringOtherApps: true)
@@ -1426,7 +1426,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
                 self.markUpdateHighlightsSeen()
                 self.updateHighlightsWindow?.close()
                 DispatchQueue.main.async { [weak self] in
-                    _ = self?.showSupportUpdateIntroIfNeeded()
+                    if includeSupportIntro {
+                        self?.showSupportUpdateIntro()
+                    } else {
+                        _ = self?.showSupportUpdateIntroIfNeeded()
+                    }
                 }
             }
         ))

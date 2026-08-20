@@ -32,9 +32,22 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/M6BwWH4BJp"><strong>Join the Vorssaint community on Discord</strong></a><br>
-  For questions, feature requests, feedback, partnerships, or just to say hi,
-  <a href="mailto:hello@vorssaint.com"><strong>hello@vorssaint.com</strong></a>
+  <a href="https://discord.gg/M6BwWH4BJp">
+    <img src="docs/assets/readme/discord-symbol.svg" width="72" alt="Discord">
+  </a>
+</p>
+
+<h3 align="center">Join the Vorssaint community on Discord</h3>
+
+<p align="center">
+  Get help, share workflows, report bugs, request improvements, and see early previews<br>
+  while the community is still growing alongside the app.<br><br>
+  <a href="https://discord.gg/M6BwWH4BJp"><strong>Join the Discord community</strong></a>
+</p>
+
+<p align="center">
+  For partnerships or anything private, email
+  <a href="mailto:hello@vorssaint.com"><strong>hello@vorssaint.com</strong></a>.
 </p>
 
 <p align="center">

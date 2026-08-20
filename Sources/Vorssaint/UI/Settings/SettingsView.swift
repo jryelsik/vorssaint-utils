@@ -1086,7 +1086,7 @@ struct AboutSettings: View {
                     appDelegate()?.showOnboarding()
                 }
                 Button(l10n.s.reviewHighlights) {
-                    appDelegate()?.showUpdateHighlights()
+                    appDelegate()?.showUpdateHighlights(includeSupportIntro: true)
                 }
                 Link(l10n.s.viewOnGitHub, destination: AppInfo.repositoryURL)
             }
@@ -1306,9 +1306,7 @@ struct SupportSettings: View {
                 )
 
                 HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.white)
+                    DiscordMark(width: 24)
                         .frame(width: 38, height: 38)
                         .background(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -1366,8 +1364,10 @@ struct SupportSettings: View {
         Button {
             openURL(AppInfo.discordURL)
         } label: {
-            Label(l10n.s.discordIntroJoinButton,
-                  systemImage: "bubble.left.and.bubble.right.fill")
+            HStack(spacing: 8) {
+                DiscordMark(width: 19)
+                Text(l10n.s.discordIntroJoinButton)
+            }
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
