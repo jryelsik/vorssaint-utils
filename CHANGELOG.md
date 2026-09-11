@@ -7,9 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Summary
-App Switcher opens more smoothly, offers display filtering, excludes hidden helper windows and preserves window focus; on-screen keyboard input keeps panels open. Screenshot gains custom editor shortcuts and optional preview focus, Scratchpad adds tab shortcuts, the menu bar panel keeps a continuous background, Cleaner protects app customizations, and Quit on close preserves incoming calls.
+App Switcher opens more smoothly, offers display filtering, excludes hidden helper windows and preserves window focus; on-screen keyboard input keeps panels open. Display brightness gains optional custom shortcuts, Screenshot gains custom editor shortcuts and optional preview focus, Scratchpad adds tab shortcuts, the menu bar panel keeps a continuous background, Cleaner protects app customizations, and Quit on close preserves incoming calls.
 
 ### Added
+- Display brightness gains optional custom shortcuts for the primary display or the display under the pointer. Thanks to @EugeneCarldotme.
 - App Switcher can show only windows on the display under the pointer, staying closed on empty displays. Thanks to @EugeneCarldotme.
 - Scratchpad tabs can be created with Command-T and closed with Command-W, keeping confirmation for notes with text. Thanks to @Borisserz.
 - Screenshot gains custom editor shortcuts and optional keyboard focus for previews. Thanks to @santi-ug.
