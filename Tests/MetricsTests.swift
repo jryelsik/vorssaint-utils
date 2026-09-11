@@ -4178,6 +4178,28 @@ struct MetricsTests {
             (restoredKeyboardShortcuts?[key] as? NSObject) == (value as? NSObject)
         }, "keyboard brightness opt-in and custom shortcuts survive a settings backup")
 
+        for enabled in [false, true] {
+            let displayShortcutSettings: [String: Any] = [
+                DefaultsKey.brightnessControlEnabled: enabled,
+                DefaultsKey.brightnessKeysEnabled: enabled,
+                DefaultsKey.brightnessOSDEnabled: enabled,
+                DefaultsKey.displayBrightnessShortcutsEnabled: enabled,
+                DefaultsKey.displayBrightnessDecreaseShortcut: "control+command:27",
+                DefaultsKey.displayBrightnessIncreaseShortcut: "control+command:24",
+            ]
+            let backup = SettingsBackupSupport.payload(appVersion: "test") {
+                displayShortcutSettings[$0]
+            }
+            let data = try? JSONSerialization.data(withJSONObject: backup)
+            let decoded = data.flatMap {
+                (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any]
+            }
+            let restored = decoded.flatMap { SettingsBackupSupport.sanitizedSettings(from: $0) }
+            expect(displayShortcutSettings.allSatisfy { key, value in
+                (restored?[key] as? NSObject) == (value as? NSObject)
+            }, "display controls and custom brightness shortcuts survive JSON backup and restore, enabled=\(enabled)")
+        }
+
         expect(registeredDefaults[DefaultsKey.screenshotOpenEditorDirectly] as? Bool == false,
                "capture keeps showing the preview unless the user opts into the editor")
         expect(registeredDefaults[DefaultsKey.screenshotDefaultAction] as? String == "",
@@ -15492,6 +15514,36 @@ struct MetricsTests {
         expect(GlobalShortcutRole.availableRoles(isAvailable: { $0 != .switcher })
                 .allSatisfy { $0 != .switcher && $0 != .switcherWindow },
                "the shortcut editor lists installed roles even without reading enable keys")
+        for role in [GlobalShortcutRole.displayBrightnessDecrease, .displayBrightnessIncrease] {
+            expect(role.feature == .brightness && role.group == .energyDisplay,
+                   "display shortcuts appear with display controls")
+            for disabled in [DefaultsKey.brightnessControlEnabled, DefaultsKey.displayBrightnessShortcutsEnabled] {
+                expect(!GlobalShortcutRole.activeRoles(isOn: { $0 != disabled }).contains(role),
+                       "display shortcuts release their keys when either toggle is off")
+            }
+            expect(!GlobalShortcutRole.activeRoles(isOn: { _ in true },
+                        isAvailable: { $0 != .brightness }).contains(role),
+                   "display shortcuts follow feature availability")
+            expect((Defaults.registeredDefaults[role.storageKey] as? String)
+                    == role.defaultShortcut.storageValue,
+                   "display shortcut defaults match their registered preferences")
+        }
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: true, pointerDisplay: 2,
+                   primaryDisplay: 1, eligible: [1, 2]) == 2,
+               "display shortcuts follow the pointer onto an external monitor")
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: false, pointerDisplay: 2,
+                   primaryDisplay: 1, eligible: [1, 2]) == 1,
+               "display shortcuts use the primary display when pointer routing is off")
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: true, pointerDisplay: 2,
+                   primaryDisplay: 1, eligible: [1]) == nil,
+               "an unavailable pointer target never changes a different display")
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: true, pointerDisplay: nil,
+                   primaryDisplay: 1, eligible: [1]) == nil,
+               "a missing pointer target does not dim the primary display")
+        expect(BrightnessSupport.shortcutDisplay(followsPointer: false, pointerDisplay: 2,
+                   primaryDisplay: 1, eligible: [2]) == nil,
+               "an unavailable primary display never redirects the shortcut")
+
         expect(GlobalShortcutRole.keyboardBrightnessDecrease.feature == .brightness
                 && GlobalShortcutRole.keyboardBrightnessIncrease.feature == .brightness
                 && GlobalShortcutRole.keyboardBrightnessDecrease.group == .mouseKeyboard
