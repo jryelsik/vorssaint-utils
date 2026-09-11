@@ -21,6 +21,16 @@ enum MonitorSamplingPolicy {
                              tick: Int,
                              intervalSeconds: Int,
                              foreground: Bool) -> Bool {
+        shouldSample(kind,
+                     tick: tick,
+                     intervalSeconds: Double(intervalSeconds),
+                     foreground: foreground)
+    }
+
+    static func shouldSample(_ kind: MonitorSamplingKind,
+                             tick: Int,
+                             intervalSeconds: Double,
+                             foreground: Bool) -> Bool {
         let stride = sampleStride(for: kind,
                                   intervalSeconds: intervalSeconds,
                                   foreground: foreground)
@@ -30,9 +40,27 @@ enum MonitorSamplingPolicy {
     static func sampleStride(for kind: MonitorSamplingKind,
                              intervalSeconds: Int,
                              foreground: Bool) -> Int {
-        let interval = max(1, intervalSeconds)
+        sampleStride(for: kind,
+                     intervalSeconds: Double(intervalSeconds),
+                     foreground: foreground)
+    }
+
+    static func sampleStride(for kind: MonitorSamplingKind,
+                             intervalSeconds: Double,
+                             foreground: Bool) -> Int {
+        let interval = max(0.5, intervalSeconds)
         let targetSeconds = targetIntervalSeconds(for: kind, foreground: foreground)
-        return max(1, Int(ceil(targetSeconds / Double(interval))))
+        return max(1, Int(ceil(targetSeconds / interval)))
+    }
+
+    /// The base timer tick duration in seconds. When any needed kind targets subsecond
+    /// sampling (e.g. 0.5 s for power or network), the timer ticks on a 0.5 s base;
+    /// otherwise it ticks at the configured interval.
+    static func effectiveBaseInterval(for kinds: [MonitorSamplingKind],
+                                      configuredIntervalSeconds: Int,
+                                      foreground: Bool) -> Double {
+        let hasSubsecond = kinds.contains { targetIntervalSeconds(for: $0, foreground: foreground) < 1.0 }
+        return hasSubsecond ? 0.5 : Double(max(1, configuredIntervalSeconds))
     }
 
     /// The timer cadence, in base ticks, that still lands every needed kind
@@ -42,6 +70,14 @@ enum MonitorSamplingPolicy {
     /// with any every-tick metric this stays 1 and nothing changes.
     static func wakeTicks(for kinds: [MonitorSamplingKind],
                           intervalSeconds: Int,
+                          foreground: Bool) -> Int {
+        wakeTicks(for: kinds,
+                  intervalSeconds: Double(intervalSeconds),
+                  foreground: foreground)
+    }
+
+    static func wakeTicks(for kinds: [MonitorSamplingKind],
+                          intervalSeconds: Double,
                           foreground: Bool) -> Int {
         let cadence = kinds.reduce(0) { partial, kind in
             gcd(partial, sampleStride(for: kind, intervalSeconds: intervalSeconds, foreground: foreground))
@@ -74,19 +110,21 @@ enum MonitorSamplingPolicy {
             switch kind {
             case .peripheralBattery:
                 return 15
-            case .cpu, .memory, .network, .disk, .power, .gpuUsage, .temperature, .fanSpeed:
+            case .power, .network:
+                return 0.5
+            case .cpu, .memory, .disk, .gpuUsage, .temperature, .fanSpeed:
                 return 1
             }
         }
 
         switch kind {
-        case .cpu, .memory, .network:
+        case .power, .network:
+            return 0.5
+        case .cpu, .gpuUsage, .memory:
             return 1
-        case .gpuUsage:
-            return 10
         case .fanSpeed:
             return 5
-        case .power, .temperature:
+        case .temperature:
             return 15
         case .disk:
             // Must stay comfortably under DiskSampler.maxGap (15 s) even

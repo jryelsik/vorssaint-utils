@@ -59,6 +59,10 @@ final class FanControlService: ObservableObject {
 
     func syncWithPreferences() {
         if AppFeature.fanControl.isAvailable {
+            refreshAccessState()
+            if accessState == .enabled {
+                _ = replaceRegistrationIfNeeded()
+            }
             if UserDefaults.standard.bool(forKey: DefaultsKey.fanControlRecoveryNeeded) {
                 restoreAutomatic()
             }
@@ -95,6 +99,7 @@ final class FanControlService: ObservableObject {
         case .requiresApproval:
             SMAppService.openSystemSettingsLoginItems()
         case .enabled:
+            guard !replaceRegistrationIfNeeded() else { return }
             requestStatus()
         case .unavailable:
             error = .helperUnavailable
@@ -408,18 +413,13 @@ final class FanControlService: ObservableObject {
     private func replaceRegistrationIfNeeded() -> Bool {
         let installed = UserDefaults.standard.string(forKey: DefaultsKey.fanControlHelperVersion) ?? ""
         let current = Self.helperVersion
-        guard !installed.isEmpty, installed != current,
+        guard installed != current,
               registrationAttemptedVersion != current,
               !UserDefaults.standard.bool(forKey: DefaultsKey.fanControlRecoveryNeeded) else { return false }
         registrationAttemptedVersion = current
         isWorking = true
-        Self.appService.unregister { error in
+        Self.appService.unregister { _ in
             DispatchQueue.main.async {
-                guard error == nil else {
-                    self.isWorking = false
-                    self.error = .helperUnavailable
-                    return
-                }
                 do {
                     try Self.appService.register()
                     UserDefaults.standard.set(current, forKey: DefaultsKey.fanControlHelperVersion)
