@@ -160,9 +160,21 @@ enum MetricFormat {
         return (value, units[index])
     }
 
-    /// Bytes (raw) → "0", "8" for B; one decimal under 10, none at or above.
+    /// Splits a bit count into a human value + unit, base-1000 (standard for network bit rates).
+    static func scaleBits(_ bits: Double) -> (value: Double, unit: String) {
+        let units = ["b", "Kb", "Mb", "Gb", "Tb", "Pb"]
+        var value = max(0, bits)
+        var index = 0
+        while value >= 1000, index < units.count - 1 {
+            value /= 1000
+            index += 1
+        }
+        return (value, units[index])
+    }
+
+    /// Bytes/Bits (raw) → "0", "8" for B/b; one decimal under 10, none at or above.
     private static func number(_ value: Double, unit: String) -> String {
-        if unit == "B" { return String(format: "%.0f", locale: Self.locale, value) }
+        if unit == "B" || unit == "b" { return String(format: "%.0f", locale: Self.locale, value) }
         return value < 10 ? String(format: "%.1f", locale: Self.locale, value) : String(format: "%.0f", locale: Self.locale, value)
     }
 
@@ -243,6 +255,46 @@ enum MetricFormat {
             return String(format: "%.1f%@", locale: Self.locale, rounded, units[index])
         }
         return "\(Int(value.rounded()))\(units[index])"
+    }
+
+    /// A network throughput in bits per second, e.g. "1.2 Mb/s", "100 Mb/s", "0 b/s". Used in the panel.
+    static func bitsPerSec(_ bytesPerSecond: Double) -> String {
+        let bits = bytesPerSecond.isFinite ? max(0, bytesPerSecond) * 8 : 0
+        let (value, unit) = scaleBits(bits)
+        return "\(number(value, unit: unit)) \(unit)/s"
+    }
+
+    /// A compact network throughput in bits per second for the menu bar, e.g. "1.2Mb/s", "320Kb/s", "0b/s".
+    static func bitsPerSecCompact(_ bytesPerSecond: Double) -> String {
+        let units = ["b/s", "Kb/s", "Mb/s", "Gb/s", "Tb/s", "Pb/s"]
+        var value = bytesPerSecond.isFinite ? max(0, bytesPerSecond) * 8 : 0
+        var index = 0
+        while value >= 1000, index < units.count - 1 {
+            value /= 1000
+            index += 1
+        }
+        while index < units.count - 1 {
+            if index == 0 {
+                guard value.rounded() >= 1000 else { break }
+            } else if value >= 10 {
+                guard value.rounded() >= 1000 else { break }
+            } else {
+                break
+            }
+            value /= 1000
+            index += 1
+        }
+        if index == 0 {
+            return "\(Int(value.rounded())) b/s"
+        }
+        if value < 10 {
+            let rounded = (value * 10).rounded() / 10
+            if rounded >= 10 {
+                return "\(Int(rounded.rounded())) \(units[index])"
+            }
+            return String(format: "%.1f %@", locale: Self.locale, rounded, units[index])
+        }
+        return "\(Int(value.rounded())) \(units[index])"
     }
 
     // MARK: Watts & percentages

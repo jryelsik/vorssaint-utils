@@ -197,7 +197,7 @@ struct NetworkSection: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(color)
             VStack(alignment: .leading, spacing: 1) {
-                Text(value.map { MetricFormat.bytesPerSec($0) } ?? l10n.s.networkMeasuring)
+                Text(value.map { MetricFormat.bitsPerSec($0) } ?? l10n.s.networkMeasuring)
                     .font(.system(size: 13.5, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .contentTransition(.numericText())
@@ -361,6 +361,6 @@ struct NetworkSection: View {
     private func networkValue(_ row: ProcessUsage) -> String {
         let down = row.networkDownBytesPerSec ?? 0
         let up = row.networkUpBytesPerSec ?? 0
-        return "↓\(MetricFormat.bytesPerSecCompact(down)) ↑\(MetricFormat.bytesPerSecCompact(up))"
+        return "↓\(MetricFormat.bitsPerSecCompact(down)) ↑\(MetricFormat.bitsPerSecCompact(up))"
     }
 }

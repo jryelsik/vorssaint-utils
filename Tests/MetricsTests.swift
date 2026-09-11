@@ -79,6 +79,18 @@ struct MetricsTests {
         expectEqual(MetricFormat.bytesPerSecCompact(1023.6 * 1024), "1.0M", "compact promotes rounded megabyte edge")
         expectEqual(MetricFormat.bytesPerSecCompact(9.96 * 1024 * 1024), "10M", "compact drops redundant decimal at 10M")
 
+        expectEqual(MetricFormat.bitsPerSec(0), "0 b/s", "bits rate zero")
+        expectEqual(MetricFormat.bitsPerSec(125_000), "1.0 Mb/s", "bits rate 1M")
+        expectEqual(MetricFormat.bitsPerSec(12_500_000), "100 Mb/s", "bits rate 100M")
+        expectEqual(MetricFormat.bitsPerSec(125_000_000), "1.0 Gb/s", "bits rate 1G")
+
+        expectEqual(MetricFormat.bitsPerSecCompact(0), "0 b/s", "compact bits zero")
+        expectEqual(MetricFormat.bitsPerSecCompact(125), "1.0 Kb/s", "compact bits 1K")
+        expectEqual(MetricFormat.bitsPerSecCompact(12_500), "100 Kb/s", "compact bits 100K")
+        expectEqual(MetricFormat.bitsPerSecCompact(125_000), "1.0 Mb/s", "compact bits 1M")
+        expectEqual(MetricFormat.bitsPerSecCompact(12_500_000), "100 Mb/s", "compact bits 100M")
+        expectEqual(MetricFormat.bitsPerSecCompact(125_000_000), "1.0 Gb/s", "compact bits 1G")
+
         // MARK: Disk helpers
 
         expect(DiskSupport.nvmeBytes(low: 2, high: nil) == 1_024_000,
@@ -14569,6 +14581,24 @@ struct MetricsTests {
                "monitor tick off the wake grid realigns to the next slot")
         expect(MonitorSamplingPolicy.alignedTick(9, wakeTicks: 1) == 9,
                "monitor tick needs no alignment at every-tick cadence")
+        expect(MonitorSamplingPolicy.sampleStride(for: .power, intervalSeconds: 0.5, foreground: false) == 1,
+               "monitor power samples on every tick at 0.5s cadence")
+        expect(MonitorSamplingPolicy.sampleStride(for: .network, intervalSeconds: 0.5, foreground: false) == 1,
+               "monitor network samples on every tick at 0.5s cadence")
+        expect(MonitorSamplingPolicy.sampleStride(for: .cpu, intervalSeconds: 0.5, foreground: false) == 2,
+               "monitor CPU samples every 2 ticks at 0.5s cadence (1s target)")
+        expect(MonitorSamplingPolicy.effectiveBaseInterval(for: [.power], configuredIntervalSeconds: 2, foreground: false) == 0.5,
+               "effective base interval drops to 0.5s when power is needed")
+        expect(MonitorSamplingPolicy.effectiveBaseInterval(for: [.network], configuredIntervalSeconds: 1, foreground: false) == 0.5,
+               "effective base interval drops to 0.5s when network is needed")
+        expect(MonitorSamplingPolicy.effectiveBaseInterval(for: [.cpu], configuredIntervalSeconds: 2, foreground: false) == 2.0,
+               "effective base interval uses configured interval when no subsecond kinds are needed")
+        expect(MonitorSamplingPolicy.shouldSample(.network, tick: 1, intervalSeconds: 0.5, foreground: false),
+               "network samples at tick 1 (0.5s)")
+        expect(!MonitorSamplingPolicy.shouldSample(.cpu, tick: 1, intervalSeconds: 0.5, foreground: false),
+               "CPU skips tick 1 at 0.5s")
+        expect(MonitorSamplingPolicy.shouldSample(.cpu, tick: 2, intervalSeconds: 0.5, foreground: false),
+               "CPU samples at tick 2 (1.0s)")
 
         // MARK: Interface filtering
 
@@ -15328,6 +15358,16 @@ struct MetricsTests {
                 && FanControlPolicy.menuBarWidthUnits(fanCount: 2) == 18
                 && FanControlPolicy.menuBarWidthUnits(fanCount: 0) == 0,
                "fan RPM menu bar width reserves one or several five-digit readings")
+        expect(FanControlPolicy.fanPercentage(actual: 2317, minimum: 2317, maximum: 7826) == 0.0
+                && FanControlPolicy.fanPercentage(actual: 2000, minimum: 2317, maximum: 7826) == 0.0
+                && FanControlPolicy.fanPercentage(actual: 7826, minimum: 2317, maximum: 7826) == 1.0
+                && FanControlPolicy.fanPercentage(actual: 8000, minimum: 2317, maximum: 7826) == 1.0
+                && FanControlPolicy.fanPercentage(actual: 5071.5, minimum: 2317, maximum: 7826) == 0.5,
+               "fan percentage maps actual RPM within hardware bounds")
+        expect(FanControlPolicy.averageFanPercentage(speeds: [2317, 7826],
+                                                     bounds: [(min: 2317, max: 7826), (min: 2317, max: 7826)]) == 0.5
+                && FanControlPolicy.averageFanPercentage(speeds: [], bounds: []) == nil,
+               "average fan percentage averages all fan percentages")
 
         let floatRPM = SMCValueCodec.encode(4_850, type: "flt ", size: 4)
         expect(floatRPM.flatMap { SMCValueCodec.decode($0, type: "flt ") } == 4_850,
