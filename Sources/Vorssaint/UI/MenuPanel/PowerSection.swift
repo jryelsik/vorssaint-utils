@@ -251,9 +251,9 @@ struct PowerSection: View {
     private var peripheralBatteryRows: some View {
         VStack(alignment: .leading, spacing: 5) {
             subsectionLabel(l10n.s.monitorShowPeripheralBattery)
-            ForEach(PeripheralBatterySupport.sorted(monitor.snapshot.peripheralBatteries).prefix(5)) { device in
+            ForEach(PeripheralBatterySupport.sorted(monitor.snapshot.peripheralBatteries).prefix(8)) { device in
                 HStack(spacing: 8) {
-                    Image(systemName: peripheralIcon(for: device.kind))
+                    Image(systemName: peripheralIcon(for: device))
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                         .frame(width: 10)
@@ -268,13 +268,39 @@ struct PowerSection: View {
                         .monospacedDigit()
                 }
             }
-            let extra = max(0, monitor.snapshot.peripheralBatteries.count - 5)
+            let extra = max(0, monitor.snapshot.peripheralBatteries.count - 8)
             if extra > 0 {
                 Text("+\(extra)")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private func peripheralIcon(for device: PeripheralBatteryDevice) -> String {
+        let lower = device.name.lowercased()
+        if device.kind == .audio {
+            if lower.contains("(left)") || lower.hasSuffix(" left") {
+                return "airpod.left"
+            }
+            if lower.contains("(right)") || lower.hasSuffix(" right") {
+                return "airpod.right"
+            }
+            if lower.contains("(case)") || lower.contains("case") {
+                return "airpodspro.chargingcase.wireless"
+            }
+            if lower.contains("max") {
+                return "airpodsmax"
+            }
+            if lower.contains("pro") {
+                return "airpodspro"
+            }
+            if lower.contains("airpod") {
+                return "airpods"
+            }
+            return "headphones"
+        }
+        return peripheralIcon(for: device.kind)
     }
 
     private func peripheralIcon(for kind: PeripheralBatteryKind) -> String {

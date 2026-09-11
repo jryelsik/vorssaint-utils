@@ -41,7 +41,7 @@ enum MenuBarMetric: String, CaseIterable, Identifiable {
         case .diskActivity: return "internaldrive.fill"
         case .battery: return "battery.100"
         case .batteryTime: return "clock"
-        case .peripheralBattery: return "keyboard"
+        case .peripheralBattery: return "headphones"
         case .power: return "powerplug.fill"
         case .fanSpeed: return "fanblades"
         }
@@ -198,6 +198,7 @@ enum MenuBarSegment {
     case networkBlock(down: String, up: String, style: MenuBarBlockStyle)
     case diskActivityBlock(read: String, write: String, style: MenuBarBlockStyle)
     case batteryBlock(percent: Int, isCharging: Bool, style: MenuBarBlockStyle)
+    case dualBatteryBlock(label: String, top: String, bottom: String, style: MenuBarBlockStyle)
     case dot(MemoryPressure)
     case separator
 }
@@ -510,7 +511,12 @@ enum MenuBarRenderer {
                                             width: reservedWidth(for: metric, preset: preset)))
                 }
             case .peripheralBattery:
-                if let metricValue = PeripheralBatterySupport.menuBarMetric(for: snapshot.peripheralBatteries) {
+                if let (left, right) = PeripheralBatterySupport.airPodsProComponents(for: snapshot.peripheralBatteries) {
+                    let text = "BAT \(left.percent)%/\(right.percent)%"
+                    items.append(MetricItem(metric: metric,
+                                            segments: [.symbol(metric.symbolName), .text(" " + text)],
+                                            width: reservedWidth(for: metric, preset: preset)))
+                } else if let metricValue = PeripheralBatterySupport.menuBarMetric(for: snapshot.peripheralBatteries) {
                     let text = metricValue.label + " " + metricValue.value
                     items.append(MetricItem(metric: metric,
                                             segments: [.symbol(metric.symbolName), .text(" " + text)],
@@ -757,7 +763,12 @@ enum MenuBarRenderer {
                                                 pressure: nil)])
                 }
             case .peripheralBattery:
-                if let metricValue = PeripheralBatterySupport.menuBarMetric(for: snapshot.peripheralBatteries) {
+                if let (left, right) = PeripheralBatterySupport.airPodsProComponents(for: snapshot.peripheralBatteries) {
+                    groups.append([.dualBatteryBlock(label: "AUD",
+                                                     top: "\(left.percent)%",
+                                                     bottom: "\(right.percent)%",
+                                                     style: style)])
+                } else if let metricValue = PeripheralBatterySupport.menuBarMetric(for: snapshot.peripheralBatteries) {
                     groups.append([.metricBlock(label: metricValue.label,
                                                 value: metricValue.value,
                                                 minimumValue: "100%+9",
@@ -846,7 +857,7 @@ enum MenuBarRenderer {
         case (_, .cpuTemperature), (_, .gpuTemperature), (_, .batteryTemperature):
             return 11      // symbol + " CPU 999°" / " GPU 999°" / " BAT 999°"
         case (_, .peripheralBattery):
-            return 12      // symbol + " KBD 100%+9"
+            return 15      // symbol + " BAT 100%/100%" or symbol + " KBD 100%+9"
         case (_, .network):
             return 15      // down symbol + 1.0G + up symbol + 1.0G
         case (_, .diskUsage):
@@ -927,6 +938,11 @@ enum MenuBarRenderer {
                 result.append(batteryBlockAttachment(percent: percent,
                                                      isCharging: isCharging,
                                                      style: style))
+            case let .dualBatteryBlock(label, top, bottom, style):
+                result.append(dualBatteryBlockAttachment(label: label,
+                                                         top: top,
+                                                         bottom: bottom,
+                                                         style: style))
             case let .dot(pressure):
                 result.append(NSAttributedString(string: "●", attributes: [.foregroundColor: nsColor(for: pressure)]))
             case .separator:
@@ -1033,6 +1049,23 @@ enum MenuBarRenderer {
         let image = batteryBlockImage(percent: percent,
                                        isCharging: isCharging,
                                        style: style)
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = NSRect(x: 0,
+                                   y: (style == .readable ? -5.9 : -5.7) + legacyBlockAttachmentNudge,
+                                   width: image.size.width,
+                                   height: image.size.height)
+        return NSAttributedString(attachment: attachment)
+    }
+
+    private static func dualBatteryBlockAttachment(label: String,
+                                                   top: String,
+                                                   bottom: String,
+                                                   style: MenuBarBlockStyle) -> NSAttributedString {
+        let image = dualBatteryBlockImage(label: label,
+                                          top: top,
+                                          bottom: bottom,
+                                          style: style)
         let attachment = NSTextAttachment()
         attachment.image = image
         attachment.bounds = NSRect(x: 0,
@@ -1328,6 +1361,77 @@ enum MenuBarRenderer {
             let valueY = (height - valueSize.height) / 2
             (value as NSString).draw(at: NSPoint(x: symbolWidth + gap, y: valueY),
                                      withAttributes: valueAttrs)
+            return true
+        }
+        image.isTemplate = false
+        blockImageCache.setObject(image, forKey: cacheKey, cost: blockImageCost(image))
+        return image
+    }
+
+    private static func dualBatteryBlockImage(label: String,
+                                               top: String,
+                                               bottom: String,
+                                               style: MenuBarBlockStyle) -> NSImage {
+        let cacheKey = "dualBattery|\(label)|\(top)|\(bottom)|\(style)|\(typographyCacheKey)" as NSString
+        if let cached = blockImageCache.object(forKey: cacheKey) { return cached }
+
+        let height: CGFloat = style == .readable ? 23 : 21
+        let labelWidth: CGFloat = style == .readable ? 6.5 : 6.0
+        let labelGap: CGFloat = 2.5
+
+        let valueFont = menuBarFont(size: networkBlockFontSize(style: style),
+                                    weight: .semibold,
+                                    width: globalFontWidth,
+                                    tabularDigits: true)
+        let labelFont = menuBarFont(size: usageBarLabelFontSize(style: style),
+                                    weight: .bold,
+                                    width: globalFontWidth,
+                                    tabularDigits: false)
+
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: labelFont,
+            // .foregroundColor: NSColor.systemGreen,
+        ]
+        let valueAttributes = dynamicTextAttributes(font: valueFont)
+
+        let reservedLines = ["100%", "99%"]
+        let sizingAttrs: [NSAttributedString.Key: Any] = [.font: valueFont]
+        let maxValWidth = (reservedLines + [top, bottom]).map {
+            ($0 as NSString).size(withAttributes: sizingAttrs).width
+        }.max() ?? 22
+
+        let totalWidth = ceil(labelWidth + labelGap + maxValWidth + (style == .readable ? 1.5 : 1.0))
+        let imageSize = NSSize(width: totalWidth, height: height)
+
+        let targetCapTop: CGFloat = style == .readable ? 20.4 : 19.5
+        let dotCenter: CGFloat = style == .readable ? 6.7 : 5.9
+        let line0Baseline = targetCapTop - valueFont.capHeight
+        let line0Y = line0Baseline + valueFont.descender
+        let line1Baseline = dotCenter - valueFont.capHeight / 2
+        let line1Y = line1Baseline + valueFont.descender
+
+        let image = NSImage(size: imageSize, flipped: false) { rect in
+            NSColor.clear.setFill()
+            rect.fill()
+
+            let characters = Array(label.prefix(3)).map(String.init)
+            let rowHeight = (imageSize.height - 2) / 3
+            for (index, character) in characters.enumerated() {
+                let charSize = (character as NSString).size(withAttributes: labelAttributes)
+                let x = (labelWidth - charSize.width) / 2
+                let y = imageSize.height - 1 - rowHeight * CGFloat(index + 1)
+                    + (rowHeight - charSize.height) / 2
+                (character as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: labelAttributes)
+            }
+
+            let values = [top, bottom]
+            for (index, val) in values.enumerated() {
+                let y = index == 0 ? line0Y : line1Y
+                let valSize = (val as NSString).size(withAttributes: valueAttributes)
+                let x = max(labelWidth + labelGap, imageSize.width - valSize.width - 0.5)
+                (val as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: valueAttributes)
+            }
+
             return true
         }
         image.isTemplate = false

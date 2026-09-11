@@ -870,11 +870,42 @@ struct MetricsTests {
                                                                  percent: 100,
                                                                  kind: .audio)),
                "peripheral battery parses connected Bluetooth headset battery")
-        expect(bluetoothDevices.contains(PeripheralBatteryDevice(id: "Bluetooth:E5:04:BE:68:C2:93",
-                                                                 name: "AirPods Pro",
+        expect(bluetoothDevices.contains(PeripheralBatteryDevice(id: "Bluetooth:E5:04:BE:68:C2:93:left",
+                                                                 name: "AirPods Pro (Left)",
+                                                                 percent: 92,
+                                                                 kind: .audio)),
+               "peripheral battery includes individual AirPods Left component")
+        expect(bluetoothDevices.contains(PeripheralBatteryDevice(id: "Bluetooth:E5:04:BE:68:C2:93:right",
+                                                                 name: "AirPods Pro (Right)",
+                                                                 percent: 90,
+                                                                 kind: .audio)),
+               "peripheral battery includes individual AirPods Right component")
+        expect(bluetoothDevices.contains(PeripheralBatteryDevice(id: "Bluetooth:E5:04:BE:68:C2:93:case",
+                                                                 name: "AirPods Pro (Case)",
                                                                  percent: 88,
                                                                  kind: .audio)),
-               "peripheral battery uses the lowest connected AirPods component")
+               "peripheral battery includes individual AirPods Case component")
+        let airPodsCase = PeripheralBatteryDevice(id: "case", name: "AirPods Pro (Case)", percent: 50, kind: .audio)
+        let airPodsLeft = PeripheralBatteryDevice(id: "left", name: "AirPods Pro (Left)", percent: 80, kind: .audio)
+        let airPodsRight = PeripheralBatteryDevice(id: "right", name: "AirPods Pro (Right)", percent: 85, kind: .audio)
+        let airPodsMetric = PeripheralBatterySupport.menuBarMetric(for: [airPodsCase, airPodsLeft, airPodsRight])
+        expect(airPodsMetric?.label == "AUD" && airPodsMetric?.value == "80%+1",
+               "menu bar metric prefers active earbud over charging case")
+        let airPodsPair = PeripheralBatterySupport.airPodsProComponents(for: [airPodsCase, airPodsLeft, airPodsRight])
+        expect(airPodsPair?.left.percent == 80 && airPodsPair?.right.percent == 85,
+               "airPodsProComponents identifies matching Left and Right components")
+        expect(PeripheralBatterySupport.isLeftEarbud(airPodsLeft),
+               "isLeftEarbud detects left earbud")
+        expect(PeripheralBatterySupport.isRightEarbud(airPodsRight),
+               "isRightEarbud detects right earbud")
+        expect(!PeripheralBatterySupport.isLeftEarbud(airPodsCase),
+               "isLeftEarbud excludes charging case")
+        let airPodsMax = PeripheralBatteryDevice(id: "max", name: "Justin's AirPods Max", percent: 67, kind: .audio)
+        expect(PeripheralBatterySupport.airPodsProComponents(for: [airPodsMax]) == nil,
+               "airPodsProComponents returns nil for AirPods Max")
+        let maxMetric = PeripheralBatterySupport.menuBarMetric(for: [airPodsMax])
+        expect(maxMetric?.label == "AUD" && maxMetric?.value == "67%",
+               "AirPods Max uses single metric representation")
         expect(!bluetoothDevices.contains { $0.name == "Old Mouse" },
                "peripheral battery ignores disconnected Bluetooth devices")
         let bluetoothKinds = PeripheralBatterySupport.bluetoothKindsByName(
@@ -914,8 +945,11 @@ struct MetricsTests {
         expect(PeripheralBatterySupport.sorted([keyboard, mouse]).map(\.id) == ["mouse", "keyboard"],
                "peripheral battery devices sort by lowest charge first")
         let menuMetric = PeripheralBatterySupport.menuBarMetric(for: [keyboard, mouse])
-        expect(menuMetric?.label == "MOU" && menuMetric?.value == "24%+1",
-               "peripheral battery menu metric shows the lowest device and extra count")
+        expect(menuMetric == nil,
+               "peripheral battery menu metric excludes non-audio devices")
+        let audioAndMouseMetric = PeripheralBatterySupport.menuBarMetric(for: [airPodsMax, mouse])
+        expect(audioAndMouseMetric?.label == "AUD" && audioAndMouseMetric?.value == "67%",
+               "menu bar metric ignores non-audio devices when counting peripherals")
         expect(PeripheralBatteryRefreshPolicy.shouldStartBluetoothRefresh(
             now: 300,
             lastStartedAt: -.greatestFiniteMagnitude,
