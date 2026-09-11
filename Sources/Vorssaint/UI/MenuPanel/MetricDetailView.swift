@@ -426,7 +426,7 @@ struct MetricDetailView: View {
                                 l10n.s.peripheralBatteryNoDevices,
                                 wrapsValue: true))
             } else {
-                for device in PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).prefix(5) {
+                for device in PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).prefix(8) {
                     rows.append(row(device.name, "\(device.percent)%"))
                 }
             }
@@ -479,8 +479,9 @@ struct MetricDetailView: View {
             if PowerSampler.hasInternalBattery {
                 return snapshot.power?.chargePercent.map { "\($0)%" } ?? "-"
             }
-            return PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).first
-                .map { "\($0.percent)%" } ?? "-"
+            let candidate = PeripheralBatterySupport.devicesForMenuBar(snapshot.peripheralBatteries).first
+                ?? PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).first
+            return candidate.map { "\($0.percent)%" } ?? "-"
         case .power:
             return snapshot.power?.systemWatts.map(MetricFormat.wattsCompact) ?? "-"
         case .fan:
@@ -510,8 +511,9 @@ struct MetricDetailView: View {
             if PowerSampler.hasInternalBattery {
                 return (snapshot.power?.isCharging ?? false) ? l10n.s.powerCharging : l10n.s.powerOnBattery
             }
-            return PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).first?.name
-                ?? l10n.s.peripheralBatteryNoDevices
+            let candidate = PeripheralBatterySupport.devicesForMenuBar(snapshot.peripheralBatteries).first
+                ?? PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).first
+            return candidate?.name ?? l10n.s.peripheralBatteryNoDevices
         case .power:
             return powerSubtitle(snapshot.power)
         case .fan:

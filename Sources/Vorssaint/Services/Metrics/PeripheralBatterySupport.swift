@@ -194,20 +194,54 @@ enum PeripheralBatterySupport {
     static func bluetoothDevices(fromSystemProfilerJSON data: Data) -> [PeripheralBatteryDevice] {
         var devices: [PeripheralBatteryDevice] = []
         for (name, properties) in connectedBluetoothEntries(from: data) {
-            guard let percent = bluetoothPercent(in: properties) else { continue }
             let minorType = string(from: properties["device_minorType"])
             let kind = kind(product: name,
                             minorType: minorType,
                             primaryUsagePage: nil,
                             primaryUsage: nil,
                             usagePairs: [])
-            let id = string(from: properties["device_address"])
-                .map { "Bluetooth:\($0)" }
-                ?? "BluetoothName:\(name.lowercased())"
-            devices.append(PeripheralBatteryDevice(id: id,
-                                                   name: name,
-                                                   percent: percent,
-                                                   kind: kind))
+            let address = string(from: properties["device_address"]) ?? name.lowercased()
+            let idPrefix = "Bluetooth:\(address)"
+
+            let left = percent(from: properties["device_batteryLevelLeft"])
+            let right = percent(from: properties["device_batteryLevelRight"])
+            let caseLevel = percent(from: properties["device_batteryLevelCase"])
+            let main = percent(from: properties["device_batteryLevelMain"])
+                ?? percent(from: properties["device_batteryLevel"])
+
+            var addedComponents = false
+            if let left {
+                devices.append(PeripheralBatteryDevice(id: "\(idPrefix):left",
+                                                       name: "\(name) (Left)",
+                                                       percent: left,
+                                                       kind: kind))
+                addedComponents = true
+            }
+            if let right {
+                devices.append(PeripheralBatteryDevice(id: "\(idPrefix):right",
+                                                       name: "\(name) (Right)",
+                                                       percent: right,
+                                                       kind: kind))
+                addedComponents = true
+            }
+            if let caseLevel {
+                devices.append(PeripheralBatteryDevice(id: "\(idPrefix):case",
+                                                       name: "\(name) (Case)",
+                                                       percent: caseLevel,
+                                                       kind: kind))
+                addedComponents = true
+            }
+            if !addedComponents, let main {
+                devices.append(PeripheralBatteryDevice(id: idPrefix,
+                                                       name: name,
+                                                       percent: main,
+                                                       kind: kind))
+            } else if !addedComponents, let fallback = bluetoothPercent(in: properties) {
+                devices.append(PeripheralBatteryDevice(id: idPrefix,
+                                                       name: name,
+                                                       percent: fallback,
+                                                       kind: kind))
+            }
         }
         return sorted(devices)
     }
@@ -216,13 +250,33 @@ enum PeripheralBatterySupport {
         var result: [String: PeripheralBatteryKind] = [:]
         for (name, properties) in connectedBluetoothEntries(from: data) {
             let minorType = string(from: properties["device_minorType"])
-            result[normalizedBluetoothName(name)] = kind(product: name,
-                                                         minorType: minorType,
-                                                         primaryUsagePage: nil,
-                                                         primaryUsage: nil,
-                                                         usagePairs: [])
+            let k = kind(product: name,
+                         minorType: minorType,
+                         primaryUsagePage: nil,
+                         primaryUsage: nil,
+                         usagePairs: [])
+            result[normalizedBluetoothName(name)] = k
+            result[normalizedBluetoothName("\(name) (left)")] = k
+            result[normalizedBluetoothName("\(name) (right)")] = k
+            result[normalizedBluetoothName("\(name) (case)")] = k
         }
         return result
+    }
+
+    static func bluetoothNamesByAddress(fromSystemProfilerJSON data: Data) -> [String: String] {
+        var result: [String: String] = [:]
+        for (name, properties) in connectedBluetoothEntries(from: data) {
+            if let address = string(from: properties["device_address"]) {
+                result[normalizedAddress(address)] = name
+            }
+        }
+        return result
+    }
+
+    static func normalizedAddress(_ address: String) -> String {
+        address.replacingOccurrences(of: "-", with: ":")
+               .trimmingCharacters(in: .whitespacesAndNewlines)
+               .lowercased()
     }
 
     static func mergingBluetoothReadings(_ readings: [BluetoothBatteryReading],
@@ -261,6 +315,20 @@ enum PeripheralBatterySupport {
             return []
         }
 
+        var notConnectedNames = Set<String>()
+        for controllerValue in controllers {
+            guard let controller = dictionary(from: controllerValue),
+                  let notConnected = controller["device_not_connected"] as? [Any] else {
+                continue
+            }
+            for entryValue in notConnected {
+                guard let entry = dictionary(from: entryValue) else { continue }
+                for (name, _) in entry {
+                    notConnectedNames.insert(normalizedBluetoothName(name))
+                }
+            }
+        }
+
         var entries: [(String, [String: Any])] = []
         for controllerValue in controllers {
             guard let controller = dictionary(from: controllerValue),
@@ -271,6 +339,29 @@ enum PeripheralBatterySupport {
                 guard let entry = dictionary(from: entryValue) else { continue }
                 for (name, propertiesValue) in entry {
                     guard let properties = dictionary(from: propertiesValue) else { continue }
+                    let normalizedName = normalizedBluetoothName(name)
+                    if notConnectedNames.contains(normalizedName) {
+                        continue
+                    }
+                    if let services = string(from: properties["device_services"]) {
+                        let hasAudio = services.contains("A2DP")
+                            || services.contains("HFP")
+                            || services.contains("AVRCP")
+                            || services.contains("SCO")
+                            || services.contains("LEA")
+                            || services.contains("AAC")
+                        if !hasAudio && services.contains("BLE") {
+                            let minorType = string(from: properties["device_minorType"])
+                            let k = kind(product: name,
+                                         minorType: minorType,
+                                         primaryUsagePage: nil,
+                                         primaryUsage: nil,
+                                         usagePairs: [])
+                            if k == .audio {
+                                continue
+                            }
+                        }
+                    }
                     entries.append((name, properties))
                 }
             }
@@ -278,7 +369,7 @@ enum PeripheralBatterySupport {
         return entries
     }
 
-    private static func normalizedBluetoothName(_ name: String) -> String {
+    static func normalizedBluetoothName(_ name: String) -> String {
         name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
@@ -320,8 +411,63 @@ enum PeripheralBatterySupport {
         }
     }
 
+    static func isCaseDevice(_ device: PeripheralBatteryDevice) -> Bool {
+        let lower = device.name.lowercased()
+        return lower.contains("(case)") || lower.hasSuffix(" case")
+    }
+
+    static func isLeftEarbud(_ device: PeripheralBatteryDevice) -> Bool {
+        guard device.kind == .audio else { return false }
+        let lower = device.name.lowercased()
+        return lower.contains("(left)") || lower.hasSuffix(" left") || device.id.hasSuffix(":left")
+    }
+
+    static func isRightEarbud(_ device: PeripheralBatteryDevice) -> Bool {
+        guard device.kind == .audio else { return false }
+        let lower = device.name.lowercased()
+        return lower.contains("(right)") || lower.hasSuffix(" right") || device.id.hasSuffix(":right")
+    }
+
+    static func earbudBaseIdentifier(_ device: PeripheralBatteryDevice) -> String {
+        if device.id.hasSuffix(":left") {
+            return String(device.id.dropLast(5))
+        }
+        if device.id.hasSuffix(":right") {
+            return String(device.id.dropLast(6))
+        }
+        let lower = device.name.lowercased()
+        if let range = lower.range(of: " (left)", options: .backwards) {
+            return String(lower[..<range.lowerBound])
+        }
+        if let range = lower.range(of: " (right)", options: .backwards) {
+            return String(lower[..<range.lowerBound])
+        }
+        return lower
+    }
+
+    static func airPodsProComponents(for devices: [PeripheralBatteryDevice]) -> (left: PeripheralBatteryDevice, right: PeripheralBatteryDevice)? {
+        let lefts = devices.filter { isLeftEarbud($0) }
+        let rights = devices.filter { isRightEarbud($0) }
+        guard !lefts.isEmpty && !rights.isEmpty else { return nil }
+
+        for left in lefts {
+            let leftBase = earbudBaseIdentifier(left)
+            if let right = rights.first(where: { earbudBaseIdentifier($0) == leftBase }) {
+                return (left, right)
+            }
+        }
+        return nil
+    }
+
+    static func devicesForMenuBar(_ devices: [PeripheralBatteryDevice]) -> [PeripheralBatteryDevice] {
+        let audioDevices = devices.filter { $0.kind == .audio }
+        let nonCases = audioDevices.filter { !isCaseDevice($0) }
+        let candidates = nonCases.isEmpty ? audioDevices : nonCases
+        return sorted(candidates)
+    }
+
     static func menuBarMetric(for devices: [PeripheralBatteryDevice]) -> (label: String, value: String)? {
-        let devices = sorted(devices)
+        let devices = devicesForMenuBar(devices)
         guard let first = devices.first else { return nil }
         let extra = devices.count > 1 ? "+\(min(9, devices.count - 1))" : ""
         return (first.kind.menuLabel, "\(first.percent)%\(extra)")
