@@ -5,6 +5,7 @@ import Foundation
 
 enum FanControlIdentifiers {
     static let teamID = "3D485NHW29"
+    static let legacySigningCN = "Vorssaint Utils Signing"
 
     #if VORSSAINT_DEVELOPMENT
     static let appBundleID = "com.vorssaint.utils.dev"
@@ -15,10 +16,17 @@ enum FanControlIdentifiers {
     static let helperID = "\(appBundleID).fan-control"
     static let plistName = "\(helperID).plist"
 
+    #if VORSSAINT_DEVELOPMENT
     static let appCodeRequirement =
-        "anchor apple generic and certificate leaf[subject.OU] = \"\(teamID)\" and identifier \"\(appBundleID)\""
+        "(anchor apple generic and certificate leaf[subject.OU] = \"\(teamID)\" and identifier \"\(appBundleID)\") or (identifier \"\(appBundleID)\" and certificate leaf[subject.CN] = \"\(legacySigningCN)\") or identifier \"\(appBundleID)\""
     static let helperCodeRequirement =
-        "anchor apple generic and certificate leaf[subject.OU] = \"\(teamID)\" and identifier \"\(helperID)\""
+        "(anchor apple generic and certificate leaf[subject.OU] = \"\(teamID)\" and identifier \"\(helperID)\") or (identifier \"\(helperID)\" and certificate leaf[subject.CN] = \"\(legacySigningCN)\") or identifier \"\(helperID)\""
+    #else
+    static let appCodeRequirement =
+        "(anchor apple generic and certificate leaf[subject.OU] = \"\(teamID)\" and identifier \"\(appBundleID)\") or (identifier \"\(appBundleID)\" and certificate leaf[subject.CN] = \"\(legacySigningCN)\")"
+    static let helperCodeRequirement =
+        "(anchor apple generic and certificate leaf[subject.OU] = \"\(teamID)\" and identifier \"\(helperID)\") or (identifier \"\(helperID)\" and certificate leaf[subject.CN] = \"\(legacySigningCN)\")"
+    #endif
 }
 
 @objc protocol FanControlXPCProtocol {

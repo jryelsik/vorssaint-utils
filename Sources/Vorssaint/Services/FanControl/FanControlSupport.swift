@@ -388,6 +388,28 @@ enum FanControlPolicy {
         return speeds.map { String(Int($0.rounded())) }.joined(separator: "/")
     }
 
+    static func fanPercentage(actual: Double, minimum: Double, maximum: Double) -> Double? {
+        guard validReading(actual), validBounds(minimum: minimum, maximum: maximum) else { return nil }
+        if actual <= minimum { return 0.0 }
+        if actual >= maximum { return 1.0 }
+        return (actual - minimum) / (maximum - minimum)
+    }
+
+    static func averageFanPercentage(speeds: [Double], bounds: [(min: Double, max: Double)] = []) -> Double? {
+        guard !speeds.isEmpty, speeds.allSatisfy(validReading) else { return nil }
+        let effectiveBounds: [(min: Double, max: Double)]
+        if bounds.count == speeds.count {
+            effectiveBounds = bounds
+        } else {
+            effectiveBounds = Array(repeating: (min: 0.0, max: maximumSaneRPM), count: speeds.count)
+        }
+        let percentages = zip(speeds, effectiveBounds).compactMap {
+            fanPercentage(actual: $0, minimum: $1.min, maximum: $1.max)
+        }
+        guard percentages.count == speeds.count else { return nil }
+        return percentages.reduce(0.0, +) / Double(percentages.count)
+    }
+
     static func menuBarWidthUnits(fanCount: Int) -> Int {
         guard (1...maximumFanCount).contains(fanCount) else { return 0 }
         return 7 + fanCount * 5 + (fanCount - 1)
