@@ -220,25 +220,25 @@ enum MenuBarRenderer {
     // so heights and proportions stay balanced automatically at any scale or size.
 
     /// Global scale factor for all menu bar fonts (e.g. 1.0 = standard, 0.9 = 10% smaller, 0.85 = compact).
-    static var globalFontScale: CGFloat = 0.8
+    static var globalFontScale: CGFloat = 0.9
 
     /// Global font weight for metric labels (.ultraLight, .thin, .light, .regular, .medium, .semibold).
     static var globalFontWeight: NSFont.Weight = .regular
 
     /// Global font weight for numeric metric values and rate lines (.ultraLight, .thin, .light, .regular, .medium, .semibold).
-    static var globalValueFontWeight: NSFont.Weight = .thin
+    static var globalValueFontWeight: NSFont.Weight = .regular
 
     /// Global font width across all menu bar items (.compressed, .condensed, or .standard).
     static var globalFontWidth: NSFont.Width = .compressed
 
     /// Base font size for metric labels (e.g. FAN, DSK, PWR, GPU, CPU, RAM). Default: 7.6
-    static var labelBaseFontSize: CGFloat = 10
+    static var labelBaseFontSize: CGFloat = 9.0
 
     /// Base font size for numeric metric values (e.g. 2%, 55%, 19W). Default: 12.0
-    static var valueBaseFontSize: CGFloat = 12.0
+    static var valueBaseFontSize: CGFloat = 11.0
 
     /// Base font size for disk activity and network rates (e.g. R... / W..., ↑... / ↓...). Default: 9.0
-    static var rateBaseFontSize: CGFloat = 12.0
+    static var rateBaseFontSize: CGFloat = 10.0
 
     /// Base font size for battery percentage text (e.g. 100%). Default: 12.0
     static var batteryBaseFontSize: CGFloat = 12.0
