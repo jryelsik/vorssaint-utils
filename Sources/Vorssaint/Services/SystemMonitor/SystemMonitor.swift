@@ -158,8 +158,6 @@ final class SystemMonitor: ObservableObject {
     private var tickCount = 0
     /// Timer cadence in base ticks (GCD of the needed strides); 1 = every tick.
     private var scheduledWakeTicks = 1
-    private var scheduledCadenceSeconds: TimeInterval = 2.0
-    private var scheduledEffectiveInterval: Double = 2.0
     /// The plan the cadence was last derived from. Activation setters early
     /// return while their flag is unchanged, but a metric or alert toggle can
     /// still change the plan underneath a slow cadence — the comparison is
@@ -540,18 +538,11 @@ final class SystemMonitor: ObservableObject {
     private func syncTimerCadence(plan: SamplingPlan) {
         lastSyncedPlan = plan
         let foreground = fullMonitorVisible || menuPanelNeeds.any
-        let needed = Self.neededKinds(of: plan)
-        let effectiveInterval = MonitorSamplingPolicy.effectiveBaseInterval(for: needed,
-                                                                           configuredIntervalSeconds: intervalSeconds,
-                                                                           foreground: foreground)
-        let desired = MonitorSamplingPolicy.wakeTicks(for: needed,
-                                                      intervalSeconds: effectiveInterval,
+        let desired = MonitorSamplingPolicy.wakeTicks(for: Self.neededKinds(of: plan),
+                                                      intervalSeconds: intervalSeconds,
                                                       foreground: foreground)
-        let desiredCadence = TimeInterval(Double(desired) * effectiveInterval)
-        guard desired != scheduledWakeTicks || desiredCadence != scheduledCadenceSeconds else { return }
+        guard desired != scheduledWakeTicks else { return }
         scheduledWakeTicks = desired
-        scheduledCadenceSeconds = desiredCadence
-        scheduledEffectiveInterval = effectiveInterval
         tickCount = MonitorSamplingPolicy.alignedTick(tickCount, wakeTicks: desired)
         if timer != nil {
             restartTimer()
@@ -573,7 +564,7 @@ final class SystemMonitor: ObservableObject {
     }
 
     private func startTimer() {
-        let cadenceSeconds = scheduledCadenceSeconds
+        let cadenceSeconds = TimeInterval(intervalSeconds * scheduledWakeTicks)
         let t = Timer(timeInterval: cadenceSeconds, repeats: true) { [weak self] _ in
             self?.refresh()
         }
@@ -610,7 +601,7 @@ final class SystemMonitor: ObservableObject {
         refreshInFlight = true
         let suppressGPUReadsUntil = self.suppressGPUReadsUntil
         let foregroundSampling = fullMonitorVisible || menuPanelNeeds.any
-        let effectiveInterval = self.scheduledEffectiveInterval
+        let intervalSeconds = self.intervalSeconds
         // Ticks advance by the timer's cadence so `tick % stride` keeps
         // measuring base intervals; mutated on main only, read by the queue
         // through the captured value.
@@ -633,7 +624,7 @@ final class SystemMonitor: ObservableObject {
             func take(_ kind: MonitorSamplingKind) -> Bool {
                 let sample = MonitorSamplingPolicy.shouldSample(kind,
                                                                 tick: tick,
-                                                                intervalSeconds: effectiveInterval,
+                                                                intervalSeconds: intervalSeconds,
                                                                 foreground: foregroundSampling)
                 if sample { sampledAnything = true }
                 return sample
@@ -753,10 +744,10 @@ final class SystemMonitor: ObservableObject {
             // The anti-glitch bridge must span a couple of sampling gaps or it
             // is useless on the slow background cadence (15 s): one bad SMC
             // read would land past the window and blank the metric.
-            let temperatureGap = TimeInterval(Double(MonitorSamplingPolicy.sampleStride(
+            let temperatureGap = TimeInterval(MonitorSamplingPolicy.sampleStride(
                 for: .temperature,
-                intervalSeconds: effectiveInterval,
-                foreground: foregroundSampling)) * effectiveInterval)
+                intervalSeconds: intervalSeconds,
+                foreground: foregroundSampling) * intervalSeconds)
             let temperatureBridge = max(12, temperatureGap * 2.2)
             if plan.needCPUTemperature {
                 if take(.temperature) {
