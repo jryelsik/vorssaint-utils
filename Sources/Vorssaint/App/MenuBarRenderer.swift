@@ -230,7 +230,7 @@ enum MenuBarRenderer {
     static var globalFontScale: CGFloat = 0.9
 
     /// Global font weight for metric labels (.ultraLight, .thin, .light, .regular, .medium, .semibold).
-    static var globalFontWeight: NSFont.Weight = .
+    static var globalFontWeight: NSFont.Weight = .light
 
     /// Global font weight for numeric metric values and rate lines (.ultraLight, .thin, .light, .regular, .medium, .semibold).
     static var globalValueFontWeight: NSFont.Weight = .regular
