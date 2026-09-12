@@ -183,7 +183,7 @@ struct MenuBarMetricsPreview: View {
                         Text(String(character))
                             .font(.system(size: style == .readable ? 6.5 : 6.1,
                                           weight: .bold))
-                            .foregroundStyle(Color.green)
+                            .foregroundStyle(.white)
                             .frame(height: ((style == .readable ? 22 : 20) - 2) / 3)
                     }
                 }

@@ -220,7 +220,7 @@ enum MenuBarRenderer {
     // so heights and proportions stay balanced automatically at any scale or size.
 
     /// Global scale factor for all menu bar fonts (e.g. 1.0 = standard, 0.9 = 10% smaller, 0.85 = compact).
-    static var globalFontScale: CGFloat = 0.9
+    static var globalFontScale: CGFloat = 1
 
     /// Global font weight for metric labels (.ultraLight, .thin, .light, .regular, .medium, .semibold).
     static var globalFontWeight: NSFont.Weight = .regular
@@ -1388,10 +1388,7 @@ enum MenuBarRenderer {
                                     width: globalFontWidth,
                                     tabularDigits: false)
 
-        let labelAttributes: [NSAttributedString.Key: Any] = [
-            .font: labelFont,
-            // .foregroundColor: NSColor.systemGreen,
-        ]
+        let labelAttributes = dynamicTextAttributes(font: labelFont)
         let valueAttributes = dynamicTextAttributes(font: valueFont)
 
         let reservedLines = ["100%", "99%"]
