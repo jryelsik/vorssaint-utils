@@ -167,7 +167,6 @@ final class SystemMonitor: ObservableObject {
     private var fallbackCPUKeys: [SMCClient.Key] = []
     private var gpuKeys: [SMCClient.Key] = []
     private var batteryKeys: [SMCClient.Key] = []
-    private var fanKeys: [SMCClient.Key] = []
     private var fanBounds: [(min: Double, max: Double)] = []
     private var tempKeysPrepared = false
     private var cpuTemperaturePlatform: CPUTemperaturePlatform = .generic
@@ -1050,53 +1049,69 @@ final class SystemMonitor: ObservableObject {
             smc = SMCClient()
             cpuTemperaturePlatform = TemperatureSensorSelector.currentPlatform()
             powerSampler = PowerSampler(smc: smc)
+            if let client = smc {
+                var count = 0
+                if let fNumKey = client.key(named: "FNum"),
+                   let fNum = client.readValue(fNumKey) {
+                    count = Int(fNum)
+                } else {
+                    // Fallback scan up to 10 fans in case FNum is missing or unreadable
+                    for i in 0..<10 {
+                        if client.key(named: "F\(i)Ac") != nil {
+                            count = i + 1
+                        } else {
+                            break
+                        }
+                    }
+                }
+                fanCount = count
+                hasFans = fanCount > 0
+            }
         }
         guard let client = smc else { return }
 
-        if needFanSpeed, !fanKeysPrepared {
-            fanKeysPrepared = true
-            let count = Self.fanTelemetryCount
-            if count > 0 {
-                let keys = (0..<count).compactMap { client.key(named: "F\($0)Ac") }
-                if keys.count == count {
-                    fanKeys = keys
-                    fanBounds = Self.fanTelemetryBounds
-                }
-            }
-        }
         if needTemperature, !tempKeysPrepared {
             tempKeysPrepared = true
-            if let client = smc {
-                let all = client.keys { name in
-                    TemperatureSensorSelector.isCPUTemperatureKey(name, platform: cpuTemperaturePlatform)
-                        || name.hasPrefix("Tg")
-                        || name.range(of: "^TB[0-9]T$", options: .regularExpression) != nil
-                        || name.hasPrefix("Ts") || name.hasPrefix("Th") || name.hasPrefix("Ta")
-                        || name.hasPrefix("Tw") || name.hasPrefix("TW")
-                }
-                cpuKeys = all.filter {
-                    TemperatureSensorSelector.isCPUTemperatureKey($0.name, platform: cpuTemperaturePlatform)
-                }
-                preferredCPUKeys = cpuKeys.filter {
-                    TemperatureSensorSelector.isCPUCoreKey($0.name, platform: cpuTemperaturePlatform)
-                }
-                let preferredNames = Set(preferredCPUKeys.map(\.name))
-                fallbackCPUKeys = cpuKeys.filter { !preferredNames.contains($0.name) }
-                gpuKeys = all.filter { $0.name.hasPrefix("Tg") }
-                batteryKeys = all.filter { $0.name.hasPrefix("TB") }
-                allDiscoveredTempKeys = all
+            let all = client.keys { name in
+                TemperatureSensorSelector.isCPUTemperatureKey(name, platform: cpuTemperaturePlatform)
+                    || name.hasPrefix("Tg")
+                    || name.range(of: "^TB[0-9]T$", options: .regularExpression) != nil
+                    || name.hasPrefix("Ts") || name.hasPrefix("Th") || name.hasPrefix("Ta")
+                    || name.hasPrefix("Tw") || name.hasPrefix("TW")
             }
+            cpuKeys = all.filter {
+                TemperatureSensorSelector.isCPUTemperatureKey($0.name, platform: cpuTemperaturePlatform)
+            }
+            preferredCPUKeys = cpuKeys.filter {
+                TemperatureSensorSelector.isCPUCoreKey($0.name, platform: cpuTemperaturePlatform)
+            }
+            let preferredNames = Set(preferredCPUKeys.map(\.name))
+            fallbackCPUKeys = cpuKeys.filter { !preferredNames.contains($0.name) }
+            gpuKeys = all.filter { $0.name.hasPrefix("Tg") }
+            batteryKeys = all.filter { $0.name.hasPrefix("TB") }
+            allDiscoveredTempKeys = all
         }
         if needFanSpeed, !fanKeysPrepared {
             fanKeysPrepared = true
-            if let client = smc {
-                for i in 0..<fanCount {
-                    let acKey = client.key(named: "F\(i)Ac")
-                    let mnKey = client.key(named: "F\(i)Mn")
-                    let mxKey = client.key(named: "F\(i)Mx")
-                    let idKey = client.key(named: "F\(i)ID")
-                    if let ac = acKey {
-                        fanKeys[i] = (ac: ac, mn: mnKey, mx: mxKey, idKey: idKey)
+            for i in 0..<fanCount {
+                let acKey = client.key(named: "F\(i)Ac")
+                let mnKey = client.key(named: "F\(i)Mn")
+                let mxKey = client.key(named: "F\(i)Mx")
+                let idKey = client.key(named: "F\(i)ID")
+                if let ac = acKey {
+                    fanKeys[i] = (ac: ac, mn: mnKey, mx: mxKey, idKey: idKey)
+                }
+            }
+            if Self.fanTelemetryBounds.count == fanCount {
+                fanBounds = Self.fanTelemetryBounds
+            } else {
+                fanBounds = (0..<fanCount).map { i in
+                    let minRPM = fanKeys[i]?.mn.flatMap { client.readValue($0) } ?? 0
+                    let maxRPM = fanKeys[i]?.mx.flatMap { client.readValue($0) } ?? FanControlPolicy.maximumSaneRPM
+                    if FanControlPolicy.validBounds(minimum: minRPM, maximum: maxRPM) {
+                        return (min: minRPM, max: maxRPM)
+                    } else {
+                        return (min: 0, max: FanControlPolicy.maximumSaneRPM)
                     }
                 }
             }
