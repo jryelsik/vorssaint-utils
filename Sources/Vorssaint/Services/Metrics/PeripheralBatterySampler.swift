@@ -3,6 +3,7 @@
 
 import Foundation
 import CoreBluetooth
+import IOBluetooth
 import IOKit
 
 final class PeripheralBatterySampler {
@@ -11,12 +12,13 @@ final class PeripheralBatterySampler {
     private var cachedDevices: [PeripheralBatteryDevice] = []
     private var cachedAt: TimeInterval = 0
     private var cachedBluetoothDevices: [PeripheralBatteryDevice] = []
+    private var cachedNamesByAddress: [String: String] = [:]
     private var bluetoothStartedAt: TimeInterval = -.greatestFiniteMagnitude
     private var bluetoothFinishedAt: TimeInterval = -.greatestFiniteMagnitude
     private var bluetoothRefreshRunning = false
     private var bluetoothBatteryRead: BluetoothBatteryRead?
     private let fastCacheInterval: TimeInterval = 15
-    private let bluetoothCacheInterval: TimeInterval = 300
+    private let bluetoothCacheInterval: TimeInterval = 30
 
     func sample(now: TimeInterval) -> [PeripheralBatteryDevice] {
         startBluetoothRefreshIfNeeded(now: now)
@@ -27,10 +29,20 @@ final class PeripheralBatterySampler {
             lock.unlock()
             return devices
         }
+        let names = cachedNamesByAddress
         let bluetoothDevices = cachedBluetoothDevices
         lock.unlock()
 
-        let devices = Self.uniqueDevices(from: Self.readFastDevices() + bluetoothDevices)
+        let disconnectedPaired = Self.readDisconnectedPairedNames()
+        let filteredBluetooth = bluetoothDevices.filter { dev in
+            let baseIdentifier = PeripheralBatterySupport.earbudBaseIdentifier(dev)
+            if disconnectedPaired.contains(baseIdentifier) { return false }
+            let normalizedName = PeripheralBatterySupport.normalizedBluetoothName(dev.name)
+            if disconnectedPaired.contains(normalizedName) { return false }
+            return true
+        }
+
+        let devices = Self.uniqueDevices(from: Self.readFastDevices(knownNamesByAddress: names) + filteredBluetooth)
 
         lock.lock()
         cachedDevices = devices
@@ -65,6 +77,9 @@ final class PeripheralBatterySampler {
             let knownKinds = PeripheralBatterySupport.bluetoothKindsByName(
                 fromSystemProfilerJSON: profilerData
             )
+            let knownNames = PeripheralBatterySupport.bluetoothNamesByAddress(
+                fromSystemProfilerJSON: profilerData
+            )
             let batteryRead = BluetoothBatteryRead(queue: bluetoothQueue) { [weak self] readings in
                 guard let self else { return }
                 let devices = PeripheralBatterySupport.mergingBluetoothReadings(
@@ -72,7 +87,7 @@ final class PeripheralBatterySampler {
                     into: profilerDevices,
                     knownKinds: knownKinds
                 )
-                finishBluetoothRefresh(with: devices)
+                finishBluetoothRefresh(with: devices, namesByAddress: knownNames)
                 bluetoothBatteryRead = nil
             }
             bluetoothBatteryRead = batteryRead
@@ -80,24 +95,99 @@ final class PeripheralBatterySampler {
         }
     }
 
-    private func finishBluetoothRefresh(with devices: [PeripheralBatteryDevice]) {
+    private func finishBluetoothRefresh(with devices: [PeripheralBatteryDevice],
+                                        namesByAddress: [String: String]) {
         lock.lock()
         cachedBluetoothDevices = devices
+        cachedNamesByAddress = namesByAddress
         bluetoothFinishedAt = ProcessInfo.processInfo.systemUptime
         bluetoothRefreshRunning = false
         cachedAt = -.greatestFiniteMagnitude
         lock.unlock()
     }
 
-    private static func readFastDevices() -> [PeripheralBatteryDevice] {
+    private static func readFastDevices(knownNamesByAddress: [String: String] = [:]) -> [PeripheralBatteryDevice] {
         let devices = readMatchingServices(named: "AppleDeviceManagementHIDEventService")
             + readMatchingServices(named: "IOHIDDevice")
+            + readIOBluetoothDevices(knownNamesByAddress: knownNamesByAddress)
         return uniqueDevices(from: devices)
     }
 
-    private static func readBluetoothSystemProfilerData(timeout: TimeInterval = 2) -> Data {
+    private static func readIOBluetoothDevices(knownNamesByAddress: [String: String]) -> [PeripheralBatteryDevice] {
+        guard let paired = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else {
+            return []
+        }
+        var devices: [PeripheralBatteryDevice] = []
+        for device in paired {
+            guard device.isConnected() else { continue }
+            let rawAddress = device.addressString ?? ""
+            let normalizedAddr = PeripheralBatterySupport.normalizedAddress(rawAddress)
+            let baseName = knownNamesByAddress[normalizedAddr]
+                ?? (device.nameOrAddress ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !baseName.isEmpty else { continue }
+            let idPrefix = "IOBluetooth:\(normalizedAddr.isEmpty ? baseName.lowercased() : normalizedAddr)"
+
+            let single = readBatteryPercent(from: device, selectorName: "batteryPercentSingle")
+            let left = readBatteryPercent(from: device, selectorName: "batteryPercentLeft")
+            let right = readBatteryPercent(from: device, selectorName: "batteryPercentRight")
+            let devCase = readBatteryPercent(from: device, selectorName: "batteryPercentCase")
+            let combined = readBatteryPercent(from: device, selectorName: "batteryPercentCombined")
+
+            let kind = PeripheralBatterySupport.kind(product: baseName,
+                                                    primaryUsagePage: nil,
+                                                    primaryUsage: nil,
+                                                    usagePairs: [])
+
+            var addedComponents = false
+            if let left {
+                devices.append(PeripheralBatteryDevice(id: "\(idPrefix):left",
+                                                       name: "\(baseName) (Left)",
+                                                       percent: left,
+                                                       kind: kind))
+                addedComponents = true
+            }
+            if let right {
+                devices.append(PeripheralBatteryDevice(id: "\(idPrefix):right",
+                                                       name: "\(baseName) (Right)",
+                                                       percent: right,
+                                                       kind: kind))
+                addedComponents = true
+            }
+            if let devCase {
+                devices.append(PeripheralBatteryDevice(id: "\(idPrefix):case",
+                                                       name: "\(baseName) (Case)",
+                                                       percent: devCase,
+                                                       kind: kind))
+                addedComponents = true
+            }
+            if !addedComponents, let percent = single ?? combined {
+                devices.append(PeripheralBatteryDevice(id: idPrefix,
+                                                       name: baseName,
+                                                       percent: percent,
+                                                       kind: kind))
+            }
+        }
+        return devices
+    }
+
+    private typealias BatteryPercentGetter = @convention(c) (AnyObject, Selector) -> UInt8
+
+    private static func readBatteryPercent(from device: AnyObject, selectorName: String) -> Int? {
+        let sel = Selector((selectorName))
+        guard device.responds(to: sel),
+              let method = class_getInstanceMethod(type(of: device), sel) else {
+            return nil
+        }
+        let imp = method_getImplementation(method)
+        let getter = unsafeBitCast(imp, to: BatteryPercentGetter.self)
+        let percent = Int(getter(device, sel))
+        guard (0...100).contains(percent), percent > 0 else { return nil }
+        return percent
+    }
+
+    private static func readBluetoothSystemProfilerData(timeout: TimeInterval = 10) -> Data {
         let result = BoundedProcessRunner.run(
-            "/usr/sbin/system_profiler", ["SPBluetoothDataType", "-json"],
+            "/usr/sbin/system_profiler", ["SPBluetoothDataType", "-json", "-detailLevel", "basic"],
             timeout: timeout, maxOutputBytes: 4 * 1024 * 1024)
         return result.status == 0 ? result.output : Data()
     }
@@ -176,20 +266,32 @@ final class PeripheralBatterySampler {
         return "name:\(fallbackName.lowercased())"
     }
 
-    private static func uniqueDevices(from devices: [PeripheralBatteryDevice]) -> [PeripheralBatteryDevice] {
-        var byID: [String: PeripheralBatteryDevice] = [:]
-        for device in devices {
-            byID[device.id] = device
+    private static func readDisconnectedPairedNames() -> Set<String> {
+        guard let paired = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else {
+            return []
         }
+        var disconnected = Set<String>()
+        for device in paired {
+            guard !device.isConnected() else { continue }
+            if let name = device.nameOrAddress {
+                disconnected.insert(PeripheralBatterySupport.normalizedBluetoothName(name))
+            }
+            if let addr = device.addressString {
+                disconnected.insert(PeripheralBatterySupport.normalizedAddress(addr))
+            }
+        }
+        return disconnected
+    }
 
+    private static func uniqueDevices(from devices: [PeripheralBatteryDevice]) -> [PeripheralBatteryDevice] {
         var seenNames = Set<String>()
         var result: [PeripheralBatteryDevice] = []
-        for device in PeripheralBatterySupport.sorted(Array(byID.values)) {
+        for device in devices {
             let key = "\(device.name.lowercased())|\(device.kind.rawValue)"
             guard seenNames.insert(key).inserted else { continue }
             result.append(device)
         }
-        return result
+        return PeripheralBatterySupport.sorted(result)
     }
 }
 

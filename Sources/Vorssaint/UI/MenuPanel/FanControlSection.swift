@@ -225,6 +225,11 @@ struct FanControlCardContent: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .frame(maxWidth: .infinity)
+        } else if error == .helperUnavailable, !snapshot.fans.isEmpty {
+            Button(strings.openSettings, action: authorize)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .frame(maxWidth: .infinity)
         } else if accessState == .enabled, controlsCanAppear {
             switch mode {
             case .system:

@@ -396,9 +396,9 @@ struct MetricDetailView: View {
         case .network:
             return [
                 row(l10n.s.networkDownload,
-                    snapshot.netDownBytesPerSec.map(MetricFormat.bytesPerSec) ?? l10n.s.networkMeasuring),
+                    snapshot.netDownBytesPerSec.map(MetricFormat.bitsPerSec) ?? l10n.s.networkMeasuring),
                 row(l10n.s.networkUpload,
-                    snapshot.netUpBytesPerSec.map(MetricFormat.bytesPerSec) ?? l10n.s.networkMeasuring),
+                    snapshot.netUpBytesPerSec.map(MetricFormat.bitsPerSec) ?? l10n.s.networkMeasuring),
                 row(l10n.s.networkThisSession, sessionNetworkText(snapshot)),
             ]
         case .disk:
@@ -435,7 +435,7 @@ struct MetricDetailView: View {
                                 l10n.s.peripheralBatteryNoDevices,
                                 wrapsValue: true))
             } else {
-                for device in PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).prefix(5) {
+                for device in PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).prefix(8) {
                     rows.append(row(device.name, "\(device.percent)%"))
                 }
             }
@@ -499,15 +499,16 @@ struct MetricDetailView: View {
             guard let used = memoryValue, let total = snapshot.memoryTotal, total > 0 else { return "-" }
             return MetricFormat.percent(Double(used) / Double(total))
         case .network:
-            return snapshot.netDownBytesPerSec.map(MetricFormat.bytesPerSecCompact) ?? "-"
+            return snapshot.netDownBytesPerSec.map(MetricFormat.bitsPerSecCompact) ?? "-"
         case .disk:
             return primaryDisk(from: snapshot.disk).map { MetricFormat.percent($0.usedFraction) } ?? "-"
         case .battery:
             if PowerSampler.hasInternalBattery {
                 return snapshot.power?.chargePercent.map { "\($0)%" } ?? "-"
             }
-            return PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).first
-                .map { "\($0.percent)%" } ?? "-"
+            let candidate = PeripheralBatterySupport.devicesForMenuBar(snapshot.peripheralBatteries).first
+                ?? PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).first
+            return candidate.map { "\($0.percent)%" } ?? "-"
         case .power:
             return snapshot.power?.systemWatts.map(MetricFormat.wattsCompact) ?? "-"
         case .fan:
@@ -531,7 +532,7 @@ struct MetricDetailView: View {
             guard let used = memoryValue, let total = snapshot.memoryTotal else { return l10n.s.memoryPressure }
             return "\(formatMemory(used)) / \(formatMemory(total))"
         case .network:
-            return "\(l10n.s.networkUpload) \(snapshot.netUpBytesPerSec.map(MetricFormat.bytesPerSecCompact) ?? "-")"
+            return "\(l10n.s.networkUpload) \(snapshot.netUpBytesPerSec.map(MetricFormat.bitsPerSecCompact) ?? "-")"
         case .disk:
             guard let disk = primaryDisk(from: snapshot.disk) else { return l10n.s.diskNoDisks }
             return "\(MetricFormat.diskBytes(disk.freeBytes)) \(l10n.s.diskAvailable)"
@@ -539,8 +540,9 @@ struct MetricDetailView: View {
             if PowerSampler.hasInternalBattery {
                 return (snapshot.power?.isCharging ?? false) ? l10n.s.powerCharging : l10n.s.powerOnBattery
             }
-            return PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).first?.name
-                ?? l10n.s.peripheralBatteryNoDevices
+            let candidate = PeripheralBatterySupport.devicesForMenuBar(snapshot.peripheralBatteries).first
+                ?? PeripheralBatterySupport.sorted(snapshot.peripheralBatteries).first
+            return candidate?.name ?? l10n.s.peripheralBatteryNoDevices
         case .power:
             return powerSubtitle(snapshot.power)
         case .fan:
@@ -713,7 +715,7 @@ struct MetricDetailView: View {
         case .network:
             let down = row.networkDownBytesPerSec ?? 0
             let up = row.networkUpBytesPerSec ?? 0
-            return "↓\(MetricFormat.bytesPerSecCompact(down)) ↑\(MetricFormat.bytesPerSecCompact(up))"
+            return "↓\(MetricFormat.bitsPerSecCompact(down)) ↑\(MetricFormat.bitsPerSecCompact(up))"
         default:
             return String(format: "%.1f%%", locale: MetricFormat.locale, row.value)
         }

@@ -185,6 +185,32 @@ struct MenuBarMetricsPreview: View {
             }
             .foregroundStyle(.white)
             .fixedSize(horizontal: true, vertical: true)
+        case let .dualBatteryBlock(label, top, bottom, style):
+            HStack(spacing: 2.5) {
+                VStack(spacing: -1.8) {
+                    ForEach(Array(label.prefix(3).enumerated()), id: \.offset) { _, character in
+                        Text(String(character))
+                            .font(.system(size: style == .readable ? 6.5 : 6.1,
+                                          weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(height: ((style == .readable ? 22 : 20) - 2) / 3)
+                    }
+                }
+                .frame(width: style == .readable ? 6.5 : 6)
+
+                VStack(alignment: .trailing, spacing: -0.6) {
+                    Text(top)
+                        .lineLimit(1)
+                    Text(bottom)
+                        .lineLimit(1)
+                }
+                .font(.system(size: MenuBarRenderer.networkBlockFontSize(style: style),
+                              weight: .semibold,
+                              design: .monospaced))
+                .foregroundStyle(.white)
+            }
+            .frame(height: style == .readable ? 22 : 20, alignment: .center)
+            .fixedSize(horizontal: true, vertical: true)
         case let .dot(pressure):
             Circle()
                 .fill(dotColor(pressure))

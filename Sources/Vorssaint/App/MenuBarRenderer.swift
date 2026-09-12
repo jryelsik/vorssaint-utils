@@ -45,7 +45,7 @@ enum MenuBarMetric: String, CaseIterable, Identifiable {
         case .connectedDevices: return "cable.connector"
         case .battery: return "battery.100"
         case .batteryTime: return "clock"
-        case .peripheralBattery: return "keyboard"
+        case .peripheralBattery: return "headphones"
         case .power: return "powerplug.fill"
         case .fanSpeed: return "fanblades"
         }
@@ -205,6 +205,7 @@ enum MenuBarSegment {
     case networkBlock(down: String, up: String, style: MenuBarBlockStyle)
     case diskActivityBlock(read: String, write: String, style: MenuBarBlockStyle)
     case batteryBlock(percent: Int, isCharging: Bool, style: MenuBarBlockStyle)
+    case dualBatteryBlock(label: String, top: String, bottom: String, style: MenuBarBlockStyle)
     case dot(MemoryPressure)
     case separator
 }
@@ -220,6 +221,40 @@ enum MenuBarBlockStyle {
 /// SwiftUI views. Labels are intentionally abbreviated because the menu bar is
 /// a scarce space, especially on notched MacBooks.
 enum MenuBarRenderer {
+    // MARK: - Global Typography Controls
+    // Edit these controls to customize all menu bar fonts from one place.
+    // Vertical centering, line spacing, and top alignment are calculated dynamically
+    // so heights and proportions stay balanced automatically at any scale or size.
+
+    /// Global scale factor for all menu bar fonts (e.g. 1.0 = standard, 0.9 = 10% smaller, 0.85 = compact).
+    static var globalFontScale: CGFloat = 1
+
+    /// Global font weight for metric labels (.ultraLight, .thin, .light, .regular, .medium, .semibold).
+    static var globalFontWeight: NSFont.Weight = .regular
+
+    /// Global font weight for numeric metric values and rate lines (.ultraLight, .thin, .light, .regular, .medium, .semibold).
+    static var globalValueFontWeight: NSFont.Weight = .regular
+
+    /// Global font width across all menu bar items (.compressed, .condensed, or .standard).
+    static var globalFontWidth: NSFont.Width = .compressed
+
+    /// Base font size for metric labels (e.g. FAN, DSK, PWR, GPU, CPU, RAM). Default: 7.6
+    static var labelBaseFontSize: CGFloat = 9.0
+
+    /// Base font size for numeric metric values (e.g. 2%, 55%, 19W). Default: 12.0
+    static var valueBaseFontSize: CGFloat = 11.0
+
+    /// Base font size for disk activity and network rates (e.g. R... / W..., ↑... / ↓...). Default: 9.0
+    static var rateBaseFontSize: CGFloat = 10.0
+
+    /// Base font size for battery percentage text (e.g. 100%). Default: 12.0
+    static var batteryBaseFontSize: CGFloat = 12.0
+
+    /// Typography cache key segment ensuring cache invalidation when typography settings change.
+    private static var typographyCacheKey: String {
+        "\(globalFontScale)|\(globalFontWeight.rawValue)|\(globalValueFontWeight.rawValue)|\(globalFontWidth.rawValue)|\(labelBaseFontSize)|\(valueBaseFontSize)|\(rateBaseFontSize)|\(batteryBaseFontSize)"
+    }
+
     private static let stackedFontSize: CGFloat = 9.4
     private static let singleLineFontSize: CGFloat = 11.6
     private static let statusTextGapColumns = 1
@@ -227,8 +262,11 @@ enum MenuBarRenderer {
     private static let glyphAndButtonChrome: CGFloat = 26
     private static let separatorWidth = 3
     private static let rateBlockReservedLines = [
-        "↓8888B", "↑8888B", "R8888B", "W8888B",
-        "↓8888M", "↑8888M", "R8888M", "W8888M",
+        "↓8888B", "↑8888B", "R 8888B", "W 8888B",
+        "↓888.8 Mb/s", "↑888.8 Mb/s", "↓8888 Mb/s", "↑8888 Mb/s",
+        "↓888.8 Kb/s", "↑888.8 Kb/s", "↓8888 Kb/s", "↑8888 Kb/s",
+        "↓8888 b/s", "↑8888 b/s",
+        "↓8888M", "↑8888M", "R 8888M", "W 8888M",
     ]
     private static let blockImageCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
@@ -274,25 +312,62 @@ enum MenuBarRenderer {
         lines(for: snapshot, metrics: metrics, allowStacked: allowStacked).count > 1
     }
 
+    static func menuBarFont(size: CGFloat,
+                            weight: NSFont.Weight? = nil,
+                            width: NSFont.Width? = nil,
+                            tabularDigits: Bool = true) -> NSFont {
+        let effectiveWeight = weight ?? globalFontWeight
+        let effectiveWidth = width ?? globalFontWidth
+        let base = NSFont.systemFont(ofSize: size, weight: effectiveWeight, width: effectiveWidth)
+        guard tabularDigits else { return base }
+        let descriptor = base.fontDescriptor.addingAttributes([
+            .featureSettings: [
+                [
+                    NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
+                    NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector
+                ]
+            ]
+        ])
+        return NSFont(descriptor: descriptor, size: size) ?? base
+    }
+
     static func statusFont(stacked: Bool) -> NSFont {
-        NSFont.monospacedSystemFont(ofSize: statusFontSize(stacked: stacked),
-                                    weight: stacked ? .semibold : .medium)
+        menuBarFont(size: statusFontSize(stacked: stacked),
+                    weight: stacked ? .semibold : globalFontWeight,
+                    width: globalFontWidth,
+                    tabularDigits: true)
     }
 
     static func statusFontSize(stacked: Bool) -> CGFloat {
-        stacked ? stackedFontSize : singleLineFontSize
+        (stacked ? stackedFontSize : singleLineFontSize) * globalFontScale
     }
 
     static func statusLineHeight(stacked: Bool) -> CGFloat {
-        stacked ? 10.2 : 14
+        (stacked ? 10.2 : 14) * globalFontScale
+    }
+
+    static func metricLabelFontSize(style: MenuBarBlockStyle) -> CGFloat {
+        (style == .readable ? labelBaseFontSize * (8.2 / 7.6) : labelBaseFontSize) * globalFontScale
+    }
+
+    static func metricValueFontSize(style: MenuBarBlockStyle) -> CGFloat {
+        (style == .readable ? valueBaseFontSize * (13.0 / 12.0) : valueBaseFontSize) * globalFontScale
     }
 
     static func networkBlockFontSize(style: MenuBarBlockStyle) -> CGFloat {
-        style == .readable ? 9.8 : 9.2
+        (style == .readable ? rateBaseFontSize * (9.8 / 9.0) : rateBaseFontSize) * globalFontScale
     }
 
     static func networkBlockLineHeight(style: MenuBarBlockStyle) -> CGFloat {
-        style == .readable ? 11.0 : 10.0
+        networkBlockFontSize(style: style) * (style == .readable ? 1.12 : 1.1)
+    }
+
+    static func usageBarLabelFontSize(style: MenuBarBlockStyle) -> CGFloat {
+        (style == .readable ? 6.5 : 6.1) * globalFontScale
+    }
+
+    static func batteryBlockFontSize(style: MenuBarBlockStyle) -> CGFloat {
+        (style == .readable ? batteryBaseFontSize * (13.0 / 12.0) : batteryBaseFontSize) * globalFontScale
     }
 
     static func rateBlockWidth(style: MenuBarBlockStyle) -> CGFloat {
@@ -399,8 +474,8 @@ enum MenuBarRenderer {
                 }
             case .network:
                 if let down = snapshot.netDownBytesPerSec, let up = snapshot.netUpBytesPerSec {
-                    let downText = MetricFormat.bytesPerSecCompact(down)
-                    let upText = MetricFormat.bytesPerSecCompact(up)
+                    let downText = MetricFormat.bitsPerSecCompact(down)
+                    let upText = MetricFormat.bitsPerSecCompact(up)
                     items.append(MetricItem(metric: metric,
                                             segments: [.symbol("arrow.down"), .text(" " + downText),
                                                        .text(" "), .symbol("arrow.up"), .text(" " + upText)],
@@ -453,7 +528,12 @@ enum MenuBarRenderer {
                                             width: reservedWidth(for: metric, preset: preset)))
                 }
             case .peripheralBattery:
-                if let metricValue = PeripheralBatterySupport.menuBarMetric(for: snapshot.peripheralBatteries) {
+                if let (left, right) = PeripheralBatterySupport.airPodsProComponents(for: snapshot.peripheralBatteries) {
+                    let text = "BAT \(left.percent)%/\(right.percent)%"
+                    items.append(MetricItem(metric: metric,
+                                            segments: [.symbol(metric.symbolName), .text(" " + text)],
+                                            width: reservedWidth(for: metric, preset: preset)))
+                } else if let metricValue = PeripheralBatterySupport.menuBarMetric(for: snapshot.peripheralBatteries) {
                     let text = metricValue.label + " " + metricValue.value
                     items.append(MetricItem(metric: metric,
                                             segments: [.symbol(metric.symbolName), .text(" " + text)],
@@ -467,9 +547,10 @@ enum MenuBarRenderer {
                                             width: reservedWidth(for: metric, preset: preset)))
                 }
             case .fanSpeed:
-                if let value = FanControlPolicy.menuBarValue(for: snapshot.fanSpeeds) {
+                if let fraction = snapshot.fanPercentage {
+                    let text = "FAN " + percent(fraction)
                     items.append(MetricItem(metric: metric,
-                                            segments: [.symbol(metric.symbolName), .text(" " + value + " RPM")],
+                                            segments: [.symbol(metric.symbolName), .text(" " + text)],
                                             width: reservedWidth(for: metric, preset: preset)))
                 } else {
                     let rpms = snapshot.fans.compactMap(\.rpm)
@@ -621,8 +702,8 @@ enum MenuBarRenderer {
                 }
             case .network:
                 if let down = snapshot.netDownBytesPerSec, let up = snapshot.netUpBytesPerSec {
-                    groups.append([.networkBlock(down: MetricFormat.bytesPerSecCompact(down),
-                                                 up: MetricFormat.bytesPerSecCompact(up),
+                    groups.append([.networkBlock(down: MetricFormat.bitsPerSecCompact(down),
+                                                 up: MetricFormat.bitsPerSecCompact(up),
                                                  style: style)])
                 }
             case .diskUsage:
@@ -723,7 +804,12 @@ enum MenuBarRenderer {
                                                 pressure: nil)])
                 }
             case .peripheralBattery:
-                if let metricValue = PeripheralBatterySupport.menuBarMetric(for: snapshot.peripheralBatteries) {
+                if let (left, right) = PeripheralBatterySupport.airPodsProComponents(for: snapshot.peripheralBatteries) {
+                    groups.append([.dualBatteryBlock(label: "AUD",
+                                                     top: "\(left.percent)%",
+                                                     bottom: "\(right.percent)%",
+                                                     style: style)])
+                } else if let metricValue = PeripheralBatterySupport.menuBarMetric(for: snapshot.peripheralBatteries) {
                     groups.append([.metricBlock(label: metricValue.label,
                                                 value: metricValue.value,
                                                 minimumValue: "100%+9",
@@ -739,12 +825,10 @@ enum MenuBarRenderer {
                                                 pressure: nil)])
                 }
             case .fanSpeed:
-                if let value = FanControlPolicy.menuBarValue(for: snapshot.fanSpeeds) {
-                    let minimumValue = Array(repeating: "20000", count: snapshot.fanSpeeds.count)
-                        .joined(separator: "/")
-                    groups.append([.metricBlock(label: "RPM",
-                                                value: value,
-                                                minimumValue: minimumValue,
+                if let fraction = snapshot.fanPercentage {
+                    groups.append([.metricBlock(label: "FAN",
+                                                value: percent(fraction),
+                                                minimumValue: "100%",
                                                 style: style,
                                                 pressure: nil)])
                 } else {
@@ -830,7 +914,7 @@ enum MenuBarRenderer {
         case (_, .cpuTemperature), (_, .gpuTemperature), (_, .batteryTemperature):
             return 11      // symbol + " CPU 999°" / " GPU 999°" / " BAT 999°"
         case (_, .peripheralBattery):
-            return 12      // symbol + " KBD 100%+9"
+            return 15      // symbol + " BAT 100%/100%" or symbol + " KBD 100%+9"
         case (_, .network):
             return 15      // down symbol + 1.0G + up symbol + 1.0G
         case (_, .diskUsage):
@@ -844,8 +928,7 @@ enum MenuBarRenderer {
         case (_, .batteryTime):
             return 12      // clock symbol + "99h 59m"
         case (_, .fanSpeed):
-            let count = max(1, SystemMonitor.fanTelemetryCount)
-            return FanControlPolicy.menuBarWidthUnits(fanCount: count)
+            return 11      // symbol + " FAN 100%"
         }
     }
 
@@ -914,6 +997,11 @@ enum MenuBarRenderer {
                 result.append(batteryBlockAttachment(percent: percent,
                                                      isCharging: isCharging,
                                                      style: style))
+            case let .dualBatteryBlock(label, top, bottom, style):
+                result.append(dualBatteryBlockAttachment(label: label,
+                                                         top: top,
+                                                         bottom: bottom,
+                                                         style: style))
             case let .dot(pressure):
                 result.append(NSAttributedString(string: "●", attributes: [.foregroundColor: nsColor(for: pressure)]))
             case .separator:
@@ -937,7 +1025,7 @@ enum MenuBarRenderer {
                                          stacked: Bool,
                                          enlarged: Bool = false) -> NSAttributedString {
         let configuration = NSImage.SymbolConfiguration(pointSize: enlarged ? 13.6 : (stacked ? 8.8 : 10.8),
-                                                        weight: .semibold)
+                                                        weight: .thin)
             .applying(NSImage.SymbolConfiguration(paletteColors: [.labelColor]))
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
             .withSymbolConfiguration(configuration) else {
@@ -995,7 +1083,7 @@ enum MenuBarRenderer {
         let attachment = NSTextAttachment()
         attachment.image = image
         attachment.bounds = NSRect(x: 0,
-                                   y: (style == .readable ? -6.1 : -5.5) + legacyBlockAttachmentNudge,
+                                   y: (style == .readable ? -5.9 : -5.7) + legacyBlockAttachmentNudge,
                                    width: image.size.width,
                                    height: image.size.height)
         return NSAttributedString(attachment: attachment)
@@ -1008,22 +1096,39 @@ enum MenuBarRenderer {
         let attachment = NSTextAttachment()
         attachment.image = image
         attachment.bounds = NSRect(x: 0,
-                                   y: (style == .readable ? -6.1 : -5.5) + legacyBlockAttachmentNudge,
+                                   y: (style == .readable ? -5.9 : -5.7) + legacyBlockAttachmentNudge,
                                    width: image.size.width,
                                    height: image.size.height)
         return NSAttributedString(attachment: attachment)
     }
 
     private static func batteryBlockAttachment(percent: Int,
-                                               isCharging: Bool,
-                                               style: MenuBarBlockStyle) -> NSAttributedString {
+                                                isCharging: Bool,
+                                                style: MenuBarBlockStyle) -> NSAttributedString {
         let image = batteryBlockImage(percent: percent,
-                                      isCharging: isCharging,
-                                      style: style)
+                                       isCharging: isCharging,
+                                       style: style)
         let attachment = NSTextAttachment()
         attachment.image = image
         attachment.bounds = NSRect(x: 0,
-                                   y: (style == .readable ? -5.7 : -5.5) + legacyBlockAttachmentNudge,
+                                   y: (style == .readable ? -5.9 : -5.7) + legacyBlockAttachmentNudge,
+                                   width: image.size.width,
+                                   height: image.size.height)
+        return NSAttributedString(attachment: attachment)
+    }
+
+    private static func dualBatteryBlockAttachment(label: String,
+                                                   top: String,
+                                                   bottom: String,
+                                                   style: MenuBarBlockStyle) -> NSAttributedString {
+        let image = dualBatteryBlockImage(label: label,
+                                          top: top,
+                                          bottom: bottom,
+                                          style: style)
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = NSRect(x: 0,
+                                   y: (style == .readable ? -5.9 : -5.7) + legacyBlockAttachmentNudge,
                                    width: image.size.width,
                                    height: image.size.height)
         return NSAttributedString(attachment: attachment)
@@ -1042,43 +1147,55 @@ enum MenuBarRenderer {
             ? MenuBarSpacingSupport.compactReserve(label: label, value: value)
             : reservedValue
         let pressureKey = pressure.map(String.init(describing:)) ?? "none"
-        let cacheKey = "metric|\(label)|\(value)|\(minimumValue)|\(style)|\(pressureKey)" as NSString
+        let cacheKey = "metric|\(label)|\(value)|\(minimumValue)|\(style)|\(pressureKey)|\(typographyCacheKey)" as NSString
         if let cached = blockImageCache.object(forKey: cacheKey) { return cached }
 
-        let labelFont = NSFont.systemFont(ofSize: style == .readable ? 7.2 : 6.6, weight: .medium)
-        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: style == .readable ? 13.0 : 12.0,
-                                                         weight: .semibold)
+        let labelFont = menuBarFont(size: metricLabelFontSize(style: style),
+                                    weight: globalFontWeight,
+                                    width: globalFontWidth,
+                                    tabularDigits: false)
+        let valueFont = menuBarFont(size: metricValueFontSize(style: style),
+                                    weight: globalValueFontWeight,
+                                    width: globalFontWidth,
+                                    tabularDigits: true)
         let sizingLabelAttrs: [NSAttributedString.Key: Any] = [.font: labelFont]
         let sizingValueAttrs: [NSAttributedString.Key: Any] = [.font: valueFont]
         let labelSize = (label as NSString).size(withAttributes: sizingLabelAttrs)
         let valueSize = (value as NSString).size(withAttributes: sizingValueAttrs)
         let minimumValueSize = (minimumValue as NSString).size(withAttributes: sizingValueAttrs)
-        let dotDiameter: CGFloat = pressure == nil ? 0 : (style == .readable ? 5.2 : 4.8)
+        let dotDiameter: CGFloat = pressure == nil ? 0 : (style == .readable ? 5.2 : 4.8) * globalFontScale
         let dotGap: CGFloat = pressure == nil || value.isEmpty ? 0 : 4
         let reservedValueWidth = max(valueSize.width, minimumValueSize.width)
         let reservedGroupWidth = dotDiameter + dotGap + reservedValueWidth
         let drawnGroupWidth = dotDiameter + dotGap + valueSize.width
         let width = ceil(max(labelSize.width, reservedGroupWidth) + (style == .readable ? 2 : 0.5))
         let height: CGFloat = style == .readable ? 23 : 21
+        let targetCapTop: CGFloat = style == .readable ? 20.4 : 19.5
+        let labelBaseline = targetCapTop - labelFont.capHeight
+        let labelY = labelBaseline + labelFont.descender
+        let dotCenter: CGFloat = style == .readable ? 6.7 : 5.9
+        let valueBaseline = dotCenter - valueFont.capHeight / 2
+        let valueY = valueBaseline + valueFont.descender
+
         let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { rect in
             NSColor.clear.setFill()
             rect.fill()
             let labelAttrs = dynamicTextAttributes(font: labelFont)
             let valueAttrs = dynamicTextAttributes(font: valueFont)
             (label as NSString).draw(at: NSPoint(x: (width - labelSize.width) / 2,
-                                     y: style == .readable ? 12.9 : 12.0),
+                                                 y: labelY),
                                      withAttributes: labelAttrs)
             var valueX = (width - drawnGroupWidth) / 2
             if let pressure {
                 let dotRect = NSRect(x: valueX,
-                                     y: style == .readable ? 4.1 : 3.5,
+                                     y: dotCenter - dotDiameter / 2,
                                      width: dotDiameter,
                                      height: dotDiameter)
                 nsColor(for: pressure).setFill()
                 NSBezierPath(ovalIn: dotRect).fill()
                 valueX += dotDiameter + dotGap
             }
-            (value as NSString).draw(at: NSPoint(x: valueX, y: style == .readable ? -0.4 : -0.8),
+            (value as NSString).draw(at: NSPoint(x: valueX, y: valueY),
                                      withAttributes: valueAttrs)
             return true
         }
@@ -1176,11 +1293,14 @@ enum MenuBarRenderer {
         } ?? "missing"
         let pressureKey = pressure.map(String.init(describing:)) ?? "none"
         let levelKey = fillLevel.map(String.init) ?? "missing"
-        let cacheKey = "usageBar|\(label)|\(levelKey)|\(fillColorHex)|\(style)|\(pressureKey)" as NSString
+        let cacheKey = "usageBar|\(label)|\(levelKey)|\(fillColorHex)|\(style)|\(pressureKey)|\(typographyCacheKey)" as NSString
         if let cached = blockImageCache.object(forKey: cacheKey) { return cached }
 
         let size = usageBarSize(style: style, showsPressure: pressure != nil)
-        let labelFont = NSFont.systemFont(ofSize: style == .readable ? 6.5 : 6.1, weight: .semibold)
+        let labelFont = menuBarFont(size: usageBarLabelFontSize(style: style),
+                                    weight: globalFontWeight,
+                                    width: globalFontWidth,
+                                    tabularDigits: false)
         let labelAttributes = dynamicTextAttributes(font: labelFont)
         let labelWidth: CGFloat = style == .readable ? 6.5 : 6
         let labelGap: CGFloat = 2
@@ -1257,48 +1377,68 @@ enum MenuBarRenderer {
                        alpha: 1)
     }
 
+    private static let networkBlockReservedLines = [
+        "↓888.8 Mb/s", "↑888.8 Mb/s", "↓8888 Mb/s", "↑8888 Mb/s",
+        "↓888.8 Kb/s", "↑888.8 Kb/s", "↓8888 Kb/s", "↑8888 Kb/s",
+        "↓8888 b/s", "↑8888 b/s",
+    ]
+
+    private static let diskActivityReservedLines = [
+        "R 8888B", "W 8888B",
+        "R 8888M", "W 8888M",
+    ]
+
     private static func networkBlockImage(down: String, up: String, style: MenuBarBlockStyle) -> NSImage {
         let uploadFirst = UserDefaults.standard.bool(forKey: DefaultsKey.menuBarNetworkUploadFirst)
-        let cacheKey = "network|\(down)|\(up)|\(style)|\(uploadFirst)" as NSString
+        let cacheKey = "network|\(down)|\(up)|\(style)|\(uploadFirst)|\(typographyCacheKey)" as NSString
         if let cached = blockImageCache.object(forKey: cacheKey) { return cached }
 
-        let lines = uploadFirst ? ["↑\(up)", "↓\(down)"] : ["↓\(down)", "↑\(up)"]
+        let lines = uploadFirst ? ["↑ \(up) ", "↓ \(down) "] : ["↓ \(down) ", "↑ \(up) "]
         return stackedRatesImage(lines: lines,
-                                 reservedLines: ["↓000B", "↑000B"],
+                                 reservedLines: networkBlockReservedLines,
                                  cacheKey: cacheKey,
                                  style: style)
     }
 
     private static func diskActivityBlockImage(read: String,
-                                               write: String,
-                                               style: MenuBarBlockStyle) -> NSImage {
-        let cacheKey = "diskActivity|\(read)|\(write)|\(style)" as NSString
+                                                write: String,
+                                                style: MenuBarBlockStyle) -> NSImage {
+        let cacheKey = "diskActivity|\(read)|\(write)|\(style)|\(typographyCacheKey)" as NSString
         if let cached = blockImageCache.object(forKey: cacheKey) { return cached }
 
-        return stackedRatesImage(lines: ["R\(read)", "W\(write)"],
-                                 reservedLines: ["R000B", "W000B"],
+        return stackedRatesImage(lines: ["R \(read)", "W \(write)"],
+                                 reservedLines: diskActivityReservedLines,
                                  cacheKey: cacheKey,
                                  style: style)
+    }
+
+    private static func networkBlockFont(style: MenuBarBlockStyle) -> NSFont {
+        menuBarFont(size: networkBlockFontSize(style: style),
+                    weight: globalValueFontWeight,
+                    width: globalFontWidth,
+                    tabularDigits: true)
     }
 
     private static func stackedRatesImage(lines: [String],
                                           reservedLines: [String],
                                           cacheKey: NSString,
                                           style: MenuBarBlockStyle) -> NSImage {
-        let font = NSFont.monospacedSystemFont(ofSize: networkBlockFontSize(style: style),
-                                               weight: .semibold)
-        let lineHeight = networkBlockLineHeight(style: style)
-        let height: CGFloat = style == .readable ? 22 : 20
-        let imageSize = NSSize(width: rateBlockWidth(style: style), height: height)
+        let font = networkBlockFont(style: style)
+        let height: CGFloat = style == .readable ? 23 : 21
+        let width = rateBlockWidth(candidates: reservedLines + lines, style: style)
+        let imageSize = NSSize(width: width, height: height)
+        let targetCapTop: CGFloat = style == .readable ? 20.4 : 19.5
+        let dotCenter: CGFloat = style == .readable ? 6.7 : 5.9
+        let line0Baseline = targetCapTop - font.capHeight
+        let line0Y = line0Baseline + font.descender
+        let line1Baseline = dotCenter - font.capHeight / 2
+        let line1Y = line1Baseline + font.descender
         let image = NSImage(size: imageSize, flipped: false) { rect in
             NSColor.clear.setFill()
             rect.fill()
             let attrs = dynamicTextAttributes(font: font)
-            let textSize = ((reservedLines.first ?? lines.first ?? "") as NSString).size(withAttributes: attrs)
-            let contentHeight = lineHeight + textSize.height
-            let bottomY = (imageSize.height - contentHeight) / 2
             for (index, line) in lines.enumerated() {
-                let y = bottomY + lineHeight * CGFloat(1 - index)
+                let y = index == 0 ? line0Y : line1Y
                 let lineSize = (line as NSString).size(withAttributes: attrs)
                 let x = max(0.5, imageSize.width - lineSize.width - 0.5)
                 (line as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
@@ -1311,8 +1451,7 @@ enum MenuBarRenderer {
     }
 
     private static func rateBlockWidth(candidates: [String], style: MenuBarBlockStyle) -> CGFloat {
-        let font = NSFont.monospacedSystemFont(ofSize: networkBlockFontSize(style: style),
-                                               weight: .semibold)
+        let font = networkBlockFont(style: style)
         let sizingAttrs: [NSAttributedString.Key: Any] = [.font: font]
         let contentWidth = candidates.map { ($0 as NSString).size(withAttributes: sizingAttrs).width }.max() ?? 22
         return ceil(contentWidth + (style == .readable ? 1.5 : 1.0))
@@ -1322,20 +1461,22 @@ enum MenuBarRenderer {
                                           isCharging: Bool,
                                           style: MenuBarBlockStyle) -> NSImage {
         let clampedPercent = max(0, min(100, percent))
-        let cacheKey = "battery|\(clampedPercent)|\(isCharging)|\(style)" as NSString
+        let cacheKey = "battery|\(clampedPercent)|\(isCharging)|\(style)|\(typographyCacheKey)" as NSString
         if let cached = blockImageCache.object(forKey: cacheKey) { return cached }
 
         let symbolName = batterySymbol(for: percent, isCharging: isCharging)
-        let symbolPointSize: CGFloat = style == .readable ? 17.0 : 15.5
-        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: style == .readable ? 13.0 : 12.0,
-                                                         weight: .semibold)
+        let symbolPointSize: CGFloat = (style == .readable ? 17.0 : 15.5) * globalFontScale
+        let valueFont = menuBarFont(size: batteryBlockFontSize(style: style),
+                                    weight: .semibold,
+                                    width: globalFontWidth,
+                                    tabularDigits: true)
         let value = "\(clampedPercent)%"
         let sizingValueAttrs: [NSAttributedString.Key: Any] = [.font: valueFont]
         let valueSize = (value as NSString).size(withAttributes: sizingValueAttrs)
         let reservedValueSize = max(valueSize.width, ("100%" as NSString).size(withAttributes: sizingValueAttrs).width)
-        let symbolWidth: CGFloat = style == .readable ? 20 : 18
-        let gap: CGFloat = style == .readable ? 5 : 4
-        let height: CGFloat = style == .readable ? 22 : 20
+        let symbolWidth: CGFloat = (style == .readable ? 20 : 18) * globalFontScale
+        let gap: CGFloat = (style == .readable ? 5 : 4) * globalFontScale
+        let height: CGFloat = style == .readable ? 23 : 21
         let imageSize = NSSize(width: ceil(symbolWidth + gap + reservedValueSize), height: height)
         let image = NSImage(size: imageSize, flipped: false) { rect in
             NSColor.clear.setFill()
@@ -1345,11 +1486,6 @@ enum MenuBarRenderer {
             if let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
                 .withSymbolConfiguration(symbolConfig) {
                 let symbolSize = symbol.size
-                // draw(in:) stretches the image to exactly fill the rect, so
-                // clamping only the width while leaving height at
-                // the symbol's full natural size squished wide glyphs like
-                // the battery icon. Scale both dimensions together to keep
-                // the glyph's own proportions.
                 let scale = min(symbolWidth / symbolSize.width, 1)
                 let drawSize = NSSize(width: symbolSize.width * scale, height: symbolSize.height * scale)
                 let symbolRect = NSRect(x: 0,
@@ -1362,6 +1498,74 @@ enum MenuBarRenderer {
             let valueY = (height - valueSize.height) / 2
             (value as NSString).draw(at: NSPoint(x: symbolWidth + gap, y: valueY),
                                      withAttributes: valueAttrs)
+            return true
+        }
+        image.isTemplate = false
+        blockImageCache.setObject(image, forKey: cacheKey, cost: blockImageCost(image))
+        return image
+    }
+
+    private static func dualBatteryBlockImage(label: String,
+                                               top: String,
+                                               bottom: String,
+                                               style: MenuBarBlockStyle) -> NSImage {
+        let cacheKey = "dualBattery|\(label)|\(top)|\(bottom)|\(style)|\(typographyCacheKey)" as NSString
+        if let cached = blockImageCache.object(forKey: cacheKey) { return cached }
+
+        let height: CGFloat = style == .readable ? 23 : 21
+        let labelWidth: CGFloat = style == .readable ? 6.5 : 6.0
+        let labelGap: CGFloat = 2.5
+
+        let valueFont = menuBarFont(size: networkBlockFontSize(style: style),
+                                    weight: .semibold,
+                                    width: globalFontWidth,
+                                    tabularDigits: true)
+        let labelFont = menuBarFont(size: usageBarLabelFontSize(style: style),
+                                    weight: .bold,
+                                    width: globalFontWidth,
+                                    tabularDigits: false)
+
+        let labelAttributes = dynamicTextAttributes(font: labelFont)
+        let valueAttributes = dynamicTextAttributes(font: valueFont)
+
+        let reservedLines = ["100%", "99%"]
+        let sizingAttrs: [NSAttributedString.Key: Any] = [.font: valueFont]
+        let maxValWidth = (reservedLines + [top, bottom]).map {
+            ($0 as NSString).size(withAttributes: sizingAttrs).width
+        }.max() ?? 22
+
+        let totalWidth = ceil(labelWidth + labelGap + maxValWidth + (style == .readable ? 1.5 : 1.0))
+        let imageSize = NSSize(width: totalWidth, height: height)
+
+        let targetCapTop: CGFloat = style == .readable ? 20.4 : 19.5
+        let dotCenter: CGFloat = style == .readable ? 6.7 : 5.9
+        let line0Baseline = targetCapTop - valueFont.capHeight
+        let line0Y = line0Baseline + valueFont.descender
+        let line1Baseline = dotCenter - valueFont.capHeight / 2
+        let line1Y = line1Baseline + valueFont.descender
+
+        let image = NSImage(size: imageSize, flipped: false) { rect in
+            NSColor.clear.setFill()
+            rect.fill()
+
+            let characters = Array(label.prefix(3)).map(String.init)
+            let rowHeight = (imageSize.height - 2) / 3
+            for (index, character) in characters.enumerated() {
+                let charSize = (character as NSString).size(withAttributes: labelAttributes)
+                let x = (labelWidth - charSize.width) / 2
+                let y = imageSize.height - 1 - rowHeight * CGFloat(index + 1)
+                    + (rowHeight - charSize.height) / 2
+                (character as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: labelAttributes)
+            }
+
+            let values = [top, bottom]
+            for (index, val) in values.enumerated() {
+                let y = index == 0 ? line0Y : line1Y
+                let valSize = (val as NSString).size(withAttributes: valueAttributes)
+                let x = max(labelWidth + labelGap, imageSize.width - valSize.width - 0.5)
+                (val as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: valueAttributes)
+            }
+
             return true
         }
         image.isTemplate = false
@@ -1395,7 +1599,9 @@ enum MenuBarRenderer {
         snapshot.cpuTemperature = 125
         snapshot.gpuTemperature = 125
         snapshot.batteryTemperature = 125
-        snapshot.fanSpeeds = Array(repeating: 20_000, count: fanCount)
+        let effectiveFanCount = max(1, fanCount)
+        snapshot.fanSpeeds = Array(repeating: 20_000, count: effectiveFanCount)
+        snapshot.fanBounds = Array(repeating: (min: 0, max: 20_000), count: effectiveFanCount)
         snapshot.netDownBytesPerSec = 1_000_000_000
         snapshot.netUpBytesPerSec = 1_000_000_000
         snapshot.disk = DiskReading(devices: [

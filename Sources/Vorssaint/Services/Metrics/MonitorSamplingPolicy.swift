@@ -80,13 +80,11 @@ enum MonitorSamplingPolicy {
         }
 
         switch kind {
-        case .cpu, .memory, .network:
+        case .cpu, .gpuUsage, .memory, .network, .power:
             return 1
-        case .gpuUsage:
-            return 10
         case .fanSpeed:
             return 5
-        case .power, .temperature:
+        case .temperature:
             return 15
         case .disk:
             // Must stay comfortably under DiskSampler.maxGap (15 s) even

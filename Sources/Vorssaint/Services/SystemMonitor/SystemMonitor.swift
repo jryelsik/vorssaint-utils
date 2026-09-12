@@ -70,6 +70,11 @@ struct SystemSnapshot {
     var detailedTemperatures: [TemperatureReading] = []
     var hasFans: Bool = false
     var fanSpeeds: [Double] = []
+    var fanBounds: [(min: Double, max: Double)] = []
+
+    var fanPercentage: Double? {
+        FanControlPolicy.averageFanPercentage(speeds: fanSpeeds, bounds: fanBounds)
+    }
 
     // Network
     var netDownBytesPerSec: Double?
@@ -162,6 +167,8 @@ final class SystemMonitor: ObservableObject {
     private var fallbackCPUKeys: [SMCClient.Key] = []
     private var gpuKeys: [SMCClient.Key] = []
     private var batteryKeys: [SMCClient.Key] = []
+    private var fanKeys: [SMCClient.Key] = []
+    private var fanBounds: [(min: Double, max: Double)] = []
     private var tempKeysPrepared = false
     private var cpuTemperaturePlatform: CPUTemperaturePlatform = .generic
 
@@ -200,6 +207,7 @@ final class SystemMonitor: ObservableObject {
     private var missedFanSpeedSamples = 0
     private var lastDiskReading: DiskReading?
     private var lastPowerReading: PowerReading?
+    private var lastNetworkReading: NetworkReading?
     private var lastPeripheralBatteries: [PeripheralBatteryDevice] = []
     private var lastPublishedPlan: SamplingPlan?
     private var lastPublishedForeground: Bool?
@@ -699,25 +707,33 @@ final class SystemMonitor: ObservableObject {
             }
 
             if plan.needCPU {
-                if take(.cpu),
-                   let cpu = self.readCPUUsage() {
-                    self.lastCPUUsage = cpu
-                    self.lastCPUUsageReadAt = now
-                    self.missedCPUUsageSamples = 0
-                    self.cpuHistory.push(cpu)
-                } else if self.missedCPUUsageSamples < 3 {
-                    self.missedCPUUsageSamples += 1
-                } else {
-                    self.lastCPUUsage = nil
-                    self.lastCPUUsageReadAt = nil
+                if take(.cpu) {
+                    if let cpu = self.readCPUUsage() {
+                        self.lastCPUUsage = cpu
+                        self.lastCPUUsageReadAt = now
+                        self.missedCPUUsageSamples = 0
+                        self.cpuHistory.push(cpu)
+                    } else if self.missedCPUUsageSamples < 3 {
+                        self.missedCPUUsageSamples += 1
+                    } else {
+                        self.lastCPUUsage = nil
+                        self.lastCPUUsageReadAt = nil
+                    }
                 }
                 next.cpuUsage = self.lastCPUUsage
                 next.cpuUsageReadAt = self.lastCPUUsageReadAt
             }
 
             if plan.needMemory {
-                if take(.memory),
-                   let (memory, isFresh) = self.stabilizedMemoryReading(now: now) {
+                if take(.memory) {
+                    if let (memory, isFresh) = self.stabilizedMemoryReading(now: now) {
+                        if isFresh, memory.total > 0 {
+                            self.memoryHistory.push(Double(memory.used) / Double(memory.total))
+                            self.memoryAppHistory.push(Double(memory.appUsed) / Double(memory.total))
+                        }
+                    }
+                }
+                if let memory = self.memoryCache {
                     next.memoryUsed = memory.used
                     next.memoryAppUsed = memory.appUsed
                     next.memoryTotal = memory.total
@@ -725,22 +741,21 @@ final class SystemMonitor: ObservableObject {
                     next.memoryCached = memory.cached
                     next.memorySwapUsed = memory.swapUsed
                     next.memoryPressure = memory.pressure
-                    if isFresh, memory.total > 0 {
-                        self.memoryHistory.push(Double(memory.used) / Double(memory.total))
-                        self.memoryAppHistory.push(Double(memory.appUsed) / Double(memory.total))
-                    }
                 }
             }
 
             if plan.needNetwork {
                 if take(.network) {
                     let network = self.networkSampler.sample(now: now)
+                    self.lastNetworkReading = network
+                    if let down = network.downBytesPerSec { self.netDownHistory.push(down) }
+                    if let up = network.upBytesPerSec { self.netUpHistory.push(up) }
+                }
+                if let network = self.lastNetworkReading {
                     next.netDownBytesPerSec = network.downBytesPerSec
                     next.netUpBytesPerSec = network.upBytesPerSec
                     next.netTotalDown = network.totalDown
                     next.netTotalUp = network.totalUp
-                    if let down = network.downBytesPerSec { self.netDownHistory.push(down) }
-                    if let up = network.upBytesPerSec { self.netUpHistory.push(up) }
                 }
             }
 
@@ -862,6 +877,7 @@ final class SystemMonitor: ObservableObject {
                     }
                 }
                 next.fanSpeeds = self.lastFanSpeeds
+                next.fanBounds = self.fanBounds
             }
 
             if plan.needFanSpeeds {
@@ -1025,23 +1041,18 @@ final class SystemMonitor: ObservableObject {
             smc = SMCClient()
             cpuTemperaturePlatform = TemperatureSensorSelector.currentPlatform()
             powerSampler = PowerSampler(smc: smc)
-            if let client = smc {
-                var count = 0
-                if let fNumKey = client.key(named: "FNum"),
-                   let fNum = client.readValue(fNumKey) {
-                    count = Int(fNum)
-                } else {
-                    // Fallback scan up to 10 fans in case FNum is missing or unreadable
-                    for i in 0..<10 {
-                        if client.key(named: "F\(i)Ac") != nil {
-                            count = i + 1
-                        } else {
-                            break
-                        }
-                    }
+        }
+        guard let client = smc else { return }
+
+        if needFanSpeed, !fanKeysPrepared {
+            fanKeysPrepared = true
+            let count = Self.fanTelemetryCount
+            if count > 0 {
+                let keys = (0..<count).compactMap { client.key(named: "F\($0)Ac") }
+                if keys.count == count {
+                    fanKeys = keys
+                    fanBounds = Self.fanTelemetryBounds
                 }
-                fanCount = count
-                hasFans = fanCount > 0
             }
         }
         if needTemperature, !tempKeysPrepared {
@@ -1128,6 +1139,22 @@ final class SystemMonitor: ObservableObject {
         guard FanControlPolicy.telemetryReadings(expectedCount: count,
                                                  readings: readings) != nil else { return 0 }
         return count
+    }()
+
+    static let fanTelemetryBounds: [(min: Double, max: Double)] = {
+        guard let client = SMCClient(),
+              let countKey = client.key(named: "FNum"),
+              let countValue = client.readValue(countKey),
+              let count = FanControlPolicy.fanCount(from: countValue) else { return [] }
+        return (0..<count).map { index in
+            let minRPM = client.key(named: "F\(index)Mn").flatMap { client.readValue($0) } ?? 0
+            let maxRPM = client.key(named: "F\(index)Mx").flatMap { client.readValue($0) } ?? FanControlPolicy.maximumSaneRPM
+            if FanControlPolicy.validBounds(minimum: minRPM, maximum: maxRPM) {
+                return (min: minRPM, max: maxRPM)
+            } else {
+                return (min: 0, max: FanControlPolicy.maximumSaneRPM)
+            }
+        }
     }()
 
     static var fanTelemetryAvailable: Bool { fanTelemetryCount > 0 }
