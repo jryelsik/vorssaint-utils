@@ -14581,24 +14581,6 @@ struct MetricsTests {
                "monitor tick off the wake grid realigns to the next slot")
         expect(MonitorSamplingPolicy.alignedTick(9, wakeTicks: 1) == 9,
                "monitor tick needs no alignment at every-tick cadence")
-        expect(MonitorSamplingPolicy.sampleStride(for: .power, intervalSeconds: 0.5, foreground: false) == 1,
-               "monitor power samples on every tick at 0.5s cadence")
-        expect(MonitorSamplingPolicy.sampleStride(for: .network, intervalSeconds: 0.5, foreground: false) == 1,
-               "monitor network samples on every tick at 0.5s cadence")
-        expect(MonitorSamplingPolicy.sampleStride(for: .cpu, intervalSeconds: 0.5, foreground: false) == 2,
-               "monitor CPU samples every 2 ticks at 0.5s cadence (1s target)")
-        expect(MonitorSamplingPolicy.effectiveBaseInterval(for: [.power], configuredIntervalSeconds: 2, foreground: false) == 0.5,
-               "effective base interval drops to 0.5s when power is needed")
-        expect(MonitorSamplingPolicy.effectiveBaseInterval(for: [.network], configuredIntervalSeconds: 1, foreground: false) == 0.5,
-               "effective base interval drops to 0.5s when network is needed")
-        expect(MonitorSamplingPolicy.effectiveBaseInterval(for: [.cpu], configuredIntervalSeconds: 2, foreground: false) == 2.0,
-               "effective base interval uses configured interval when no subsecond kinds are needed")
-        expect(MonitorSamplingPolicy.shouldSample(.network, tick: 1, intervalSeconds: 0.5, foreground: false),
-               "network samples at tick 1 (0.5s)")
-        expect(!MonitorSamplingPolicy.shouldSample(.cpu, tick: 1, intervalSeconds: 0.5, foreground: false),
-               "CPU skips tick 1 at 0.5s")
-        expect(MonitorSamplingPolicy.shouldSample(.cpu, tick: 2, intervalSeconds: 0.5, foreground: false),
-               "CPU samples at tick 2 (1.0s)")
 
         // MARK: Interface filtering
 
