@@ -540,12 +540,11 @@ enum MenuBarRenderer {
                                             width: reservedWidth(for: metric, preset: preset)))
                 }
             case .power:
-                if let watts = snapshot.power?.systemWatts {
-                    let text = "PWR " + MetricFormat.wattsCompact(watts)
-                    items.append(MetricItem(metric: metric,
-                                            segments: [.symbol(metric.symbolName), .text(" " + text)],
-                                            width: reservedWidth(for: metric, preset: preset)))
-                }
+                let watts = snapshot.power?.systemWatts ?? 0
+                let text = "PWR " + MetricFormat.wattsCompact(watts)
+                items.append(MetricItem(metric: metric,
+                                        segments: [.symbol(metric.symbolName), .text(" " + text)],
+                                        width: reservedWidth(for: metric, preset: preset)))
             case .fanSpeed:
                 if let fraction = snapshot.fanPercentage {
                     let text = "FAN " + percent(fraction)
@@ -817,13 +816,12 @@ enum MenuBarRenderer {
                                                 pressure: nil)])
                 }
             case .power:
-                if let watts = snapshot.power?.systemWatts {
-                    groups.append([.metricBlock(label: "PWR",
-                                                value: MetricFormat.wattsCompact(watts),
-                                                minimumValue: "99W",
-                                                style: style,
-                                                pressure: nil)])
-                }
+                let watts = snapshot.power?.systemWatts ?? 0
+                groups.append([.metricBlock(label: "PWR",
+                                            value: MetricFormat.wattsCompact(watts),
+                                            minimumValue: "99W",
+                                            style: style,
+                                            pressure: nil)])
             case .fanSpeed:
                 if let fraction = snapshot.fanPercentage {
                     groups.append([.metricBlock(label: "FAN",
