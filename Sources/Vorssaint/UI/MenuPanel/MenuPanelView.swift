@@ -60,6 +60,7 @@ final class MenuPanelFocus: ObservableObject {
 /// Content of the menu bar popover: keep-awake controls, the volume mixer and
 /// the system monitor.
 struct MenuPanelView: View {
+    var notchSize: CGSize? = nil
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var updates = UpdateService.shared
     @ObservedObject private var panelFocus = MenuPanelFocus.shared
@@ -97,7 +98,9 @@ struct MenuPanelView: View {
 
     var body: some View {
         Group {
-            if selectedMetric != nil {
+            if let notchSize {
+                embeddedPanel(size: notchSize)
+            } else if selectedMetric != nil {
                 metricPanel
             } else {
                 navigablePanel
@@ -164,6 +167,31 @@ struct MenuPanelView: View {
             selectedMetric = metric
             selectedSection = metric.panelSection
         }
+    }
+
+    /// Uses the same sections and actions inside an existing surface. The
+    /// host already supplies the title and material; one native scroll view
+    /// keeps long sections usable without nesting two scroll regions.
+    private func embeddedPanel(size: CGSize) -> some View {
+        VStack(spacing: 12) {
+            Group {
+                if let selectedMetric { metricNavigationHeader(selectedMetric) }
+                else { sectionNavigation }
+            }
+            .frame(height: 38)
+            OverlayScrollView(measuredHeight: $navigableContentHeight) {
+                Group {
+                    if let selectedMetric { MetricDetailView(kind: selectedMetric) }
+                    else { section(for: activeSection, collapsible: false) }
+                }
+                .frame(width: size.width)
+                .environment(\.notchPresentation, true)
+                .environment(\.colorScheme, .dark)
+            }
+            .frame(width: size.width, height: max(80, size.height - 96))
+            footer
+        }
+        .frame(width: size.width, height: size.height, alignment: .top)
     }
 
     private var navigablePanel: some View {
@@ -338,7 +366,7 @@ struct MenuPanelView: View {
                 }
                 .buttonStyle(.plain)
                 .focused($focusedSection, equals: id)
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.86))
+                .foregroundStyle(isActive ? (notchSize != nil ? Color.white : Color.accentColor) : Color.secondary.opacity(0.86))
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(isActive ? navigationActiveFill : Color.clear)
@@ -349,7 +377,7 @@ struct MenuPanelView: View {
         .padding(4)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(PanelSurface.cardFill(for: colorScheme))
+                .fill(notchSize != nil ? .black : PanelSurface.cardFill(for: colorScheme))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -358,7 +386,8 @@ struct MenuPanelView: View {
     }
 
     private var navigationActiveFill: Color {
-        colorScheme == .light ? Color.accentColor.opacity(0.13) : Color.accentColor.opacity(0.20)
+        if notchSize != nil { return .black }
+        return colorScheme == .light ? Color.accentColor.opacity(0.13) : Color.accentColor.opacity(0.20)
     }
 
     private func metricNavigationHeader(_ kind: MetricDetailKind) -> some View {
@@ -440,7 +469,7 @@ struct MenuPanelView: View {
                 .frame(maxWidth: .infinity, minHeight: 28)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(PanelSurface.cardFill(for: colorScheme))
+                        .fill(notchSize != nil ? .black : PanelSurface.cardFill(for: colorScheme))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -1043,7 +1072,7 @@ struct UtilitiesSection: View {
 private enum ControlPanelItem: String, PanelOrderItem, Identifiable {
     case mouseScroll, focusFollowsMouse, mouseAcceleration, mouseNavigation, switcher, cutPaste, autoQuit, shelf, windowMaximize, dockPreview, keyDebounce,
          dockClick, dockClickHide, dockClickCycle, middleClick, textSnippets, radialMenu, mouseButtonShortcuts, superKey,
-         mouseClickDebounce
+         mouseClickDebounce, notch
 
     var id: String { rawValue }
 
@@ -1065,6 +1094,7 @@ private enum ControlPanelItem: String, PanelOrderItem, Identifiable {
         case .dockClick, .dockClickHide, .dockClickCycle: return .dockClick
         case .middleClick: return .middleClick
         case .textSnippets: return .textSnippets
+        case .notch: return .notch
         case .radialMenu: return .radialMenu
         case .mouseButtonShortcuts: return .mouseButtonShortcuts
         case .superKey: return .superKey
@@ -1082,7 +1112,7 @@ private enum ControlCategory: String, CaseIterable, Identifiable {
 
     static func category(for item: ControlPanelItem) -> ControlCategory {
         switch item {
-        case .switcher, .dockPreview, .dockClick, .dockClickHide, .dockClickCycle, .windowMaximize, .autoQuit:
+        case .switcher, .dockPreview, .dockClick, .dockClickHide, .dockClickCycle, .windowMaximize, .autoQuit, .notch:
             return .windows
         case .mouseScroll, .focusFollowsMouse, .mouseAcceleration, .mouseNavigation, .mouseButtonShortcuts, .middleClick, .keyDebounce,
              .textSnippets, .radialMenu, .superKey, .mouseClickDebounce:
@@ -1126,6 +1156,8 @@ struct QuickControlsSection: View {
     @AppStorage(DefaultsKey.dockClickCycleWindows) private var dockClickCycleEnabled = false
     @AppStorage(DefaultsKey.middleClickEnabled) private var middleClickEnabled = false
     @AppStorage(DefaultsKey.textSnippetsEnabled) private var textSnippetsEnabled = false
+    @AppStorage(DefaultsKey.notchEnabled) private var notchEnabled = false
+    @AppStorage(DefaultsKey.panelControlNotch) private var showNotch = true
     @AppStorage(DefaultsKey.radialMenuEnabled) private var radialMenuEnabled = false
     @AppStorage(DefaultsKey.mouseButtonShortcutsEnabled) private var mouseButtonShortcutsEnabled = false
     @AppStorage(DefaultsKey.mouseSpacesGestureEnabled) private var spacesEnabled = false
@@ -1271,6 +1303,7 @@ struct QuickControlsSection: View {
         case .dockClickCycle: return dockClickCycleEnabled
         case .middleClick: return middleClickEnabled
         case .textSnippets: return textSnippetsEnabled
+        case .notch: return notchEnabled
         case .radialMenu: return radialMenuEnabled
         case .mouseButtonShortcuts: return mouseButtonShortcutsEnabled || spacesEnabled
         case .superKey: return superKeyEnabled
@@ -1348,6 +1381,7 @@ struct QuickControlsSection: View {
         case .dockClickCycle: return showDockClickCycle
         case .middleClick: return showMiddleClick
         case .textSnippets: return showTextSnippets
+        case .notch: return showNotch
         case .radialMenu: return showRadialMenu
         case .mouseButtonShortcuts: return showMouseButtonShortcuts
         case .superKey: return showSuperKey
@@ -1617,6 +1651,23 @@ struct QuickControlsSection: View {
                 .onChange(of: textSnippetsEnabled) { _, enabled in
                     TextSnippetService.shared.syncWithPreferences()
                     requestAccessibilityIfNeeded(enabled)
+                }
+        case .notch:
+            let text = FeatureStrings.notch(l10n.language)
+            PanelToggleRow(title: text.title,
+                           caption: text.description,
+                           systemImage: "macbook",
+                           isOn: $notchEnabled,
+                           isEditing: editing,
+                           showsDragHandle: true,
+                           visibility: $showNotch,
+                           accessoryTitle: l10n.s.menuSettings,
+                           accessoryAction: {
+                               SettingsRouter.shared.page = .notch
+                               appDelegate()?.openSettingsWindow()
+                           })
+                .onChange(of: notchEnabled) { _, _ in
+                    NotchService.shared.syncWithPreferences()
                 }
         case .radialMenu:
             let radialStrings = FeatureStrings.radialMenu(l10n.language)

@@ -17,6 +17,24 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 
 MUTATIONS = [
+    ("switcher reveal before resize", "switcher", "Sources/Vorssaint/UI/Switcher/SwitcherView.swift",
+     "                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _ in\n"
+     "                            DispatchQueue.main.async {\n"
+     "                                revealSelection(in: proxy, animated: true)\n"
+     "                            }\n"
+     "                        }",
+     "                        .onChange(of: switcher.iconRowLayout.previewContentWidth) { _, _ in\n"
+     "                            revealSelection(in: proxy, animated: true)\n"
+     "                        }",
+     "previews search/narrowed without changing selection"),
+    ("switcher loses replacement identity", "switcher", "Sources/Vorssaint/UI/Switcher/SwitcherView.swift",
+     "                        .onChange(of: appWindows.map(\\.element.id)) { _, _ in",
+     "                        .onChange(of: appWindows.count) { _, _ in",
+     "previews boundary close/next app at unchanged index"),
+    ("switcher follows window count", "core", "Sources/Vorssaint/Services/Switcher/SwitcherSupport.swift",
+     "let previewCeiling = max(previewCardWidth, appRowSurfaceWidth - previewPanelPadding * 2)",
+     "let previewCeiling = maxPreviewContentWidth",
+     "App Switcher panel keeps one width while stepping through apps"),
     ("invalid numeric result", "harness", "Tests/TestSuite.swift",
      "actual.isFinite && expected.isFinite && tol.isFinite && tol >= 0\n                   && abs(actual - expected) <= tol",
      "!(abs(actual - expected) > tol)", "every invalid numeric comparison fails"),
