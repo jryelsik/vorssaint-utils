@@ -7,7 +7,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Summary
-Dynamic Island prioritizes music apps and adds everyday controls, configurable focus cycles, timer sound alerts, a visual settings editor, draggable shortcuts, keyboard navigation, downloads, camera and file tools. App Switcher gains smoother opening, steadier previews, display filtering and better focus; other improvements cover clipboard reliability, update checks, shortcuts, attachments, capture previews, power controls, menu bar recovery, incoming calls, cleaning safeguards, uninstall results, fan control and recording synchronization.
+Dynamic Island prioritizes music apps and adds everyday controls, configurable focus cycles, timer sound alerts, ready-to-use layouts, draggable shortcuts, keyboard navigation, downloads, camera and file tools. App Switcher gains smoother opening, steadier previews, display filtering and better focus; other improvements cover clipboard reliability, update checks, shortcuts, attachments, capture previews, power controls, menu bar recovery, incoming calls, cleaning safeguards, uninstall results, fan control and recording synchronization.
 
 ### Added
 - Shelf accepts attachments dragged from other apps, preserving complete files and original names. Thanks to @Borisserz.

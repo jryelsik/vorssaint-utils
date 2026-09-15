@@ -749,19 +749,35 @@ wait_for_install_metadata() {
     done
 }
 
-mkdir -p "build/stage"
-BUILD_STAGE="build/stage/$APP_NAME.app"
-rm -rf "$BUILD_STAGE"
-ditto --noextattr --noqtn "$STAGE" "$BUILD_STAGE"
-xattr -c -r "$BUILD_STAGE" 2>/dev/null || true
-if ! codesign --verify --deep --strict "$BUILD_STAGE" >/dev/null 2>&1; then
-    if xattr -lr "$BUILD_STAGE" 2>/dev/null | grep -Eq 'com\.apple\.(FinderInfo|ResourceFork|provenance|fileprovider)'; then
-        echo "  build/stage copy has local filesystem metadata; temp bundle was verified"
-    else
-        codesign --verify --deep --strict "$BUILD_STAGE"
-    fi
+# Installed development builds only need the copy in /Applications. Retaining
+# another app in each checkout pollutes application search with stale builds.
+if (( DEV )); then
+    for old_bundle in "build/stage/$APP_NAME.app" "build/stage.noindex/$APP_NAME.app"; do
+        if [[ -d "$old_bundle" ]]; then
+            /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+                -u "$PWD/$old_bundle" >/dev/null 2>&1 || true
+            rm -rf "$old_bundle"
+        fi
+    done
 fi
-echo "✓ Bundle ready: $BUILD_STAGE"
+
+if (( !DEV || !INSTALL )); then
+    STAGE_DIRECTORY="build/stage"
+    (( DEV )) && STAGE_DIRECTORY="build/stage.noindex"
+    mkdir -p "$STAGE_DIRECTORY"
+    BUILD_STAGE="$STAGE_DIRECTORY/$APP_NAME.app"
+    rm -rf "$BUILD_STAGE"
+    ditto --noextattr --noqtn "$STAGE" "$BUILD_STAGE"
+    xattr -c -r "$BUILD_STAGE" 2>/dev/null || true
+    if ! codesign --verify --deep --strict "$BUILD_STAGE" >/dev/null 2>&1; then
+        if xattr -lr "$BUILD_STAGE" 2>/dev/null | grep -Eq 'com\.apple\.(FinderInfo|ResourceFork|provenance|fileprovider)'; then
+            echo "  staging copy has local filesystem metadata; temp bundle was verified"
+        else
+            codesign --verify --deep --strict "$BUILD_STAGE"
+        fi
+    fi
+    echo "✓ Bundle ready: $BUILD_STAGE"
+fi
 
 if (( INSTALL )); then
     echo "▸ Installing into /Applications…"
