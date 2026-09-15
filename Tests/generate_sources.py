@@ -36,6 +36,20 @@ def write(name, text):
 
 def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
+    cleaner = "Sources/Vorssaint/Services/Cleaner/JunkCleaner.swift"
+    write("CleanerEligibilityBodies.swift", "import Foundation\nextension CleanerEligibilityTests {\n"
+          + "".join(declaration(cleaner, "    private static func " + name)
+                    .replace("private static func", "static func", 1)
+                    for name in ["appendLeftovers(", "scanCaches(", "scanLogs(",
+                                 "directorySize(", "fileSize(", "sorted("])
+          + declaration(cleaner, "    private static func leftoverOwner(")
+          + declaration(cleaner, "    private static func containerOwner(")
+          + declaration(cleaner, "    private static func mayRemove(")
+          + "static func owner(_ url: URL, metadata: Bool = false) -> String? {\n"
+          + "leftoverOwner(entry: url.lastPathComponent, url: url, usesContainerMetadata: metadata)\n}\n"
+          + "static func canRemove(_ item: Item, installed: Set<String> = []) -> Bool {\n"
+          + "mayRemove(item, installed: installed)\n}\n}\n")
+
     updates = "Sources/Vorssaint/Services/AppUpdates/AppUpdatesService.swift"
     loader = "Sources/Vorssaint/Services/AppUpdates/AppUpdateFeedLoader.swift"
     # Only the network configuration, clock and declaration visibility change.
@@ -52,6 +66,12 @@ def main():
           + declaration(updates, "    private func onlineCatalogFindings(").replace("private func", "func", 1).replace("Date()", "self.clock.now()")
           + declaration(updates, "    private func onlineResult(").replace("private func", "func", 1)
           + "}\n}\n")
+    playback_adapter = "Sources/NowPlayingAdapter/NowPlayingSelection.swift"
+    write("NotchPlaybackRouting.swift", "import Foundation\nimport ObjectiveC\nextension NotchPlaybackRoutingContract {\n"
+          + declaration(playback_adapter, "    static func readInfo(")
+          + declaration(playback_adapter, "    static func supportedCommands(")
+          + declaration(playback_adapter, "    static func send(")
+          + declaration(playback_adapter, "    private static func makeTarget(").replace("private static", "static", 1) + "}\n")
     write("NotchActivationButton.swift", "import AppKit\n"
           + declaration("Sources/Vorssaint/Services/Notch/NotchWindowHost.swift", "final class NotchActivationButton:"))
     shelf = "Sources/Vorssaint/Services/Shelf/ShelfService.swift"
@@ -70,6 +90,13 @@ def main():
           + "}\n}\n")
     notch = "Sources/Vorssaint/Services/Notch/NotchService.swift"
     canvas = "Sources/Vorssaint/Services/Notch/NotchWindowHost.swift"
+    write("NotchPresentationRefresh.swift", "import Foundation\nimport Combine\n"
+          + "extension NotchPresentationRefreshContract {\nfinal class Service: State {\n"
+          + declaration(notch, "    func refreshPresentation(")
+          + declaration(notch, "    func updateCaptureHeight(")
+          + declaration(notch, "    func removeCapture(")
+          + declaration(notch, "    private func clearCapture(")
+          + "}\n}\n")
     write("ShelfDropRouting.swift", "import AppKit\n\nextension ShelfDropRoutingContract {\n"
           + declaration(canvas, "struct NotchFileDropActions {")
           + "final class ShelfService: ShelfState {\nstatic var shared = ShelfService()\n"
@@ -120,6 +147,25 @@ def main():
 
     preview = "Sources/Vorssaint/Services/QuickTools/ScreenshotQuickPreviewController.swift"
     selection = "Sources/Vorssaint/Services/QuickTools/ScreenshotSelectionController.swift"
+    refresh_methods = [
+        "    private func screenCaptureToolDidChange()",
+        "    private func adoptCapturePolicy(",
+        "    private func applySource(",
+        "    private func loadLiveLoupeImages()",
+        "    private func markCapturePending()",
+        "    private func captureFullDisplayUnderMouse()",
+        "    private func repeatLastRegion()",
+        "    fileprivate func confirmWindow(",
+        "    fileprivate func confirmRegion(",
+        "    fileprivate func confirmColor(",
+    ]
+    write("ScreenshotSelectionRefresh.swift", "import Foundation\nimport AppKit\n"
+          + "extension ScreenshotSelectionRefreshContract.Chooser {\n"
+          + declaration(selection, "    fileprivate var acceptsCaptureInput:").replace("fileprivate var", "var", 1)
+          + "".join(declaration(selection, prefix).replace("fileprivate func", "func", 1)
+                    .replace("private func", "func", 1).replace("UserDefaults.standard", "ReviewDefaults.current")
+                    for prefix in refresh_methods)
+          + "}\n")
     write("NotchCaptureKeyboard.swift", "import Foundation\nimport Carbon.HIToolbox\n\nextension NotchCaptureKeyboardContract {\n"
           + "final class NotchService {\nstatic var shared = NotchService()\n"
           + "var presentationWindow: NSPanel? = NSPanel()\nvar acceptsSystemFeedback = true\n"
