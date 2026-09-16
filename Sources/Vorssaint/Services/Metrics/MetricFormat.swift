@@ -387,6 +387,14 @@ enum MetricFormat {
             return String(format: "%.0f °F", locale: Self.locale, celsius * 9 / 5 + 32)
         }
     }
+    // static func temperature(_ celsius: Double, unit: TemperatureUnit) -> String {
+    //     switch unit {
+    //     case .celsius:
+    //         return String(format: "%.0f °C", locale: Self.locale, celsius)
+    //     case .fahrenheit:
+    //         return String(format: "%.0f °F", locale: Self.locale, celsius * 9 / 5 + 32)
+    //     }
+    // }
 
     /// Compact temperature for tight surfaces like the menu bar. The settings
     /// page still makes the active unit explicit.

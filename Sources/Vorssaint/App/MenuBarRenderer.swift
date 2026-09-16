@@ -233,16 +233,16 @@ enum MenuBarRenderer {
     static var globalFontWeight: NSFont.Weight = .regular
 
     /// Global font weight for numeric metric values and rate lines (.ultraLight, .thin, .light, .regular, .medium, .semibold).
-    static var globalValueFontWeight: NSFont.Weight = .regular
+    static var globalValueFontWeight: NSFont.Weight = .light
 
     /// Global font width across all menu bar items (.compressed, .condensed, or .standard).
     static var globalFontWidth: NSFont.Width = .compressed
 
     /// Base font size for metric labels (e.g. FAN, DSK, PWR, GPU, CPU, RAM). Default: 7.6
-    static var labelBaseFontSize: CGFloat = 9.0
+    static var labelBaseFontSize: CGFloat = 10
 
     /// Base font size for numeric metric values (e.g. 2%, 55%, 19W). Default: 12.0
-    static var valueBaseFontSize: CGFloat = 11.0
+    static var valueBaseFontSize: CGFloat = 12
 
     /// Base font size for disk activity and network rates (e.g. R... / W..., ↑... / ↓...). Default: 9.0
     static var rateBaseFontSize: CGFloat = 10.0
@@ -1212,7 +1212,7 @@ enum MenuBarRenderer {
         let labelFont = NSFont.systemFont(ofSize: style == .readable ? 7.2 : 6.6, weight: .medium)
         let sizingLabelAttrs: [NSAttributedString.Key: Any] = [.font: labelFont]
         let labelSize = (label as NSString).size(withAttributes: sizingLabelAttrs)
-        
+
         let circleDiameter: CGFloat = style == .readable ? 11.5 : 10.5
         let width = ceil(max(labelSize.width, circleDiameter) + (style == .readable ? 2 : 0.5))
         let height: CGFloat = style == .readable ? 23 : 21
@@ -1232,7 +1232,7 @@ enum MenuBarRenderer {
                                     y: circleY,
                                     width: circleDiameter,
                                     height: circleDiameter)
-            
+
             // Draw background circle
             let bgPath = NSBezierPath(ovalIn: circleRect)
             NSColor.labelColor.withAlphaComponent(0.12).setStroke()
@@ -1246,7 +1246,7 @@ enum MenuBarRenderer {
                 let arcPath = NSBezierPath()
                 let endAngle = 90 - 360 * CGFloat(min(1.0, max(0.0, fraction)))
                 arcPath.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: endAngle, clockwise: true)
-                
+
                 // Color dynamically based on speed fraction
                 let tint: NSColor
                 switch fraction {
@@ -1671,9 +1671,9 @@ enum MenuBarRenderer {
     }
 
     private static func temperatureLabel(_ component: String) -> String {
-        let unit = TemperatureUnit(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.temperatureUnit) ?? "")
-            ?? .celsius
-        return component + MetricFormat.temperatureUnitSuffix(unit)
+        // let unit = TemperatureUnit(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.temperatureUnit) ?? "")
+        //     ?? .celsius
+        return component //+ MetricFormat.temperatureUnitSuffix(unit)
     }
 
     private static func combinedComponentLabel(_ component: String,

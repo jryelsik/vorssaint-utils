@@ -80,8 +80,10 @@ enum MonitorSamplingPolicy {
         }
 
         switch kind {
-        case .cpu, .gpuUsage, .memory, .network, .power:
-            return 1
+        case .cpu, .gpuUsage, .network, .power:
+            return 2
+        case .memory:
+            return 5
         case .fanSpeed:
             return 5
         case .temperature:
