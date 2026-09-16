@@ -4,10 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
 ## [3.4.0-beta.2] - 2026-09-16
 
 ### Summary
-Dynamic Island can hide until you hover, reopen where you choose and keep capture controls out of the way while you select. This beta also adds screenshot watermarks, makes screenshots and recordings sharper, and fixes timers, music, alerts and recording audio.
+Dynamic Island can hide until you hover, reopen where you choose and keep capture controls out of the way while you select. This beta also adds screenshot watermarks, makes screenshots and recordings sharper, and fixes Dock previews, timers, music, alerts and recording audio.
 
 ### Added
 - Dynamic Island can stay completely hidden and appear only when you move the pointer to the top of the screen.
@@ -25,6 +27,7 @@ Dynamic Island can hide until you hover, reopen where you choose and keep captur
 - Recordings in Balanced quality keep the full screen resolution, so text stays as sharp as in the system recorder.
 
 ### Fixed
+- Dock Preview and App Switcher keep windows from other desktops available, with an optional Dock filter and no empty flashes during desktop changes.
 - Dynamic Island stays in place when the desktop is revealed after opening on hover.
 - Dynamic Island shows the right headphone icons, keeps device alerts readable and no longer shows a wrong volume alert when switching outputs.
 - Dynamic Island no longer shows playing music at rest when you turned that off, while the music controls remain available.
