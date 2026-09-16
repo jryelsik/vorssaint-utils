@@ -516,6 +516,7 @@ struct PermissionsPortalSections: View {
             }
         case .automationFinder: return automationStatus(.finder)
         case .automationTerminal: return automationStatus(.terminal)
+        case .automationPlayback: return .unknown
         case .audioCapture:
             // No public check exists for system audio capture; the mixer
             // reports a failed tap, which is the one readable signal.
@@ -655,7 +656,7 @@ private struct PermissionPortalRow: View {
             || Permissions.shared.calendarAccess == .writeOnly
         case .camera: return Permissions.shared.camera == .undetermined
         case .microphone: return Permissions.shared.microphone == .undetermined
-        case .filesAndFolders, .automationFinder, .automationTerminal, .audioCapture,
+        case .filesAndFolders, .automationFinder, .automationTerminal, .automationPlayback, .audioCapture,
              .appManagement: return false
         }
     }
@@ -673,7 +674,7 @@ private struct PermissionPortalRow: View {
         case .calendar: Permissions.shared.requestCalendar()
         case .camera: Permissions.shared.requestCamera()
         case .microphone: Permissions.shared.requestMicrophone()
-        case .filesAndFolders, .automationFinder, .automationTerminal, .audioCapture,
+        case .filesAndFolders, .automationFinder, .automationTerminal, .automationPlayback, .audioCapture,
              .appManagement:
             break
         }
@@ -686,7 +687,7 @@ private struct PermissionPortalRow: View {
         case .fullDiskAccess: Permissions.shared.openFullDiskAccessSettings()
         case .filesAndFolders: Permissions.shared.openFilesAndFoldersSettings()
         case .notifications: Permissions.shared.openNotificationSettings()
-        case .automationFinder, .automationTerminal: Permissions.shared.openAutomationSettings()
+        case .automationFinder, .automationTerminal, .automationPlayback: Permissions.shared.openAutomationSettings()
         case .audioCapture: Permissions.shared.openAudioCaptureSettings()
         case .microphone: Permissions.shared.openMicrophoneSettings()
         case .calendar: Permissions.shared.openCalendarSettings()
@@ -866,6 +867,7 @@ extension AppPermission {
         case .notifications: return hub.permNotifications
         case .automationFinder: return hub.permAutomationFinder
         case .automationTerminal: return hub.permAutomationTerminal
+        case .automationPlayback: return FeatureStrings.notchMusicExtras(L10n.shared.language).automationPermission
         case .audioCapture: return hub.permAudioCapture
         case .microphone: return FeatureStrings.recorder(L10n.shared.language).microphonePermissionName
         case .calendar: return FeatureStrings.notchCalendar(L10n.shared.language).title
@@ -883,6 +885,7 @@ extension AppPermission {
         case .notifications: return hub.explainNotifications
         case .automationFinder: return hub.explainAutomationFinder
         case .automationTerminal: return hub.explainAutomationTerminal
+        case .automationPlayback: return FeatureStrings.notchMusicExtras(L10n.shared.language).automationExplanation
         case .audioCapture: return hub.explainAudioCapture
         case .microphone:
             return FeatureStrings.recorder(L10n.shared.language).microphonePermissionExplain

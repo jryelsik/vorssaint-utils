@@ -66,6 +66,7 @@ struct MetricsTests {
     }
 
     private static func coreChecks(_ suite: TestSuite) {
+        ScreenshotWatermarkTests.run(suite)
         func expect(_ condition: Bool, _ message: @autoclosure () -> String,
                     file: StaticString = #filePath, line: UInt = #line) {
             suite.expect(condition, message(), file: file, line: line)
@@ -88,6 +89,7 @@ struct MetricsTests {
 
         NotchTests.run { expect($0, $1) }
         NotchVolumeKeyTests.run { expect($0, $1) }
+        MixerOutputAdjustmentContract.run(suite)
 
         // MARK: Byte / rate formatting
 
@@ -3816,10 +3818,10 @@ struct MetricsTests {
         // decision above is made consciously, never by omission.
         let releasePlist = NSDictionary(contentsOfFile: "Resources/Info.plist")
         let plistVersion = (releasePlist?["CFBundleShortVersionString"] as? String) ?? ""
-        expect(plistVersion == "3.3.5",
+        expect(plistVersion == "3.4.0-beta.2",
                "bumping the app version requires re-deciding the support prompt pin above")
         let plistBuild = (releasePlist?["CFBundleVersion"] as? String) ?? ""
-        expect(plistBuild == "86",
+        expect(plistBuild == "88",
                "every app version needs its own incremented bundle build")
         expect(SupportUpdateIntroInfo.releaseVersion == "3.3.2",
                "the support prompt remains deliberately pinned to 3.3.2")
@@ -5808,6 +5810,8 @@ struct MetricsTests {
                "Media image background starts transparent")
         expect(registeredDefaults[DefaultsKey.mediaImagePreserveModificationDate] as? Bool == false,
                "Media image conversion does not preserve modification dates by default")
+        expect(registeredDefaults[DefaultsKey.mediaImageSaveInSubfolder] as? Bool == false,
+               "Media image batches keep their current output folder by default")
         expect(registeredDefaults[DefaultsKey.mediaImageProfiles] as? String == "[]",
                "Media image profiles start empty")
         expect((registeredDefaults[DefaultsKey.autoQuitExceptions] as? [String]) == Defaults.mandatoryAutoQuitExceptionBundleIDs,
@@ -15155,7 +15159,7 @@ struct MetricsTests {
                "no hub group is empty")
         expect(AppPermission.allCases.map(\.rawValue) == [
             "accessibility", "screenRecording", "fullDiskAccess", "filesAndFolders", "notifications",
-            "automationFinder", "automationTerminal", "audioCapture", "microphone", "camera",
+            "automationFinder", "automationTerminal", "automationPlayback", "audioCapture", "microphone", "camera",
             "appManagement", "calendar",
         ], "permission portal contains every supported permission")
         let onboardingViewSource = (try? String(
@@ -18592,23 +18596,38 @@ struct MetricsTests {
         // hosted SwiftUI content answers presses that never reach mouseDown.
         let panelBody = quickPreviewCode.components(separatedBy: "class ScreenshotQuickPreviewPanel")
             .dropFirst().first?.components(separatedBy: "\n}").first ?? ""
-        // The opt-in keys the panel only after it is on screen, and the line
-        // above the call is the preference check itself, so dropping the guard
-        // or keying before ordering front both go red.
+        // The preference keys the panel only after it is on screen, and the
+        // line above the call is the preference check itself, so dropping the
+        // guard or keying before ordering front both go red.
         let presentLines = presentBody.components(separatedBy: "\n")
         let orderFrontLine = presentLines.firstIndex { $0.contains("orderFrontRegardless()") } ?? -1
         let makeKeyLine = presentLines.firstIndex { $0.contains("makeKey") } ?? -1
         expect(orderFrontLine >= 0 && makeKeyLine > orderFrontLine
                 && presentLines[makeKeyLine - 1].contains("screenshotPreviewTakesFocus"),
-               "presenting the screenshot preview takes key focus only behind the opt-in, once the panel is on screen")
+               "presenting the screenshot preview takes key focus only behind the preference, once the panel is on screen")
         let makeKeyCount = quickPreviewCode.components(separatedBy: "makeKey").count - 1
         let panelMakeKeyCount = panelBody.components(separatedBy: "makeKey").count - 1
         expect(makeKeyCount == panelMakeKeyCount + 1 && panelMakeKeyCount >= 1,
-               "hover never takes key focus; only the opted-in presentation and the panel's own click hand-off may")
+               "hover never takes key focus; only the preferred presentation and the panel's own click hand-off may")
         expect(panelBody.contains("sendEvent") && panelBody.contains("leftMouseDown")
                 && panelBody.contains("makeKey") && panelBody.contains("super.sendEvent"),
                "clicking the screenshot preview takes key focus and still delivers every preview button")
 
+        // With the controls in Dynamic Island, the island's panel holds key
+        // focus and the selection surface never becomes key on its own, so
+        // AppKit would spend the first click making it key and swallow it.
+        // The overlay view claims that click; comments are stripped so prose
+        // cannot answer for the code.
+        let selectionSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/QuickTools/ScreenshotSelectionController.swift",
+            encoding: .utf8)) ?? ""
+        let overlayViewBody = selectionSource.components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+            .components(separatedBy: "class ScreenshotOverlayView").dropFirst().first?
+            .components(separatedBy: "\n}").first ?? ""
+        expect(overlayViewBody.contains("acceptsFirstMouse") && overlayViewBody.contains("acceptsFirstMouse(for event: NSEvent?) -> Bool { true }"),
+               "the capture surface claims the first click so a drag works while Dynamic Island holds key focus")
         // Both editors state a size the same way. The recorder wrote
         // "1960x1274" beside a screenshot editor that already read
         // "2940 \u{00D7} 1912 px", and the letter x is the tell.
@@ -18987,6 +19006,57 @@ struct MetricsTests {
         expect(ScreenshotSupport.downscaledSize(pixelSize: CGSize(width: 800, height: 600), scale: 1)
                 == CGSize(width: 800, height: 600),
                "a 1x capture never downscales")
+
+        // Every picture the app writes says how big it is on screen, the way
+        // a system screenshot does, so Preview and a paste show a Retina
+        // capture at its own size instead of doubled and softened.
+        func encodedDensity(_ data: Data?) -> (width: Int, dpi: Double)? {
+            guard let data,
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary?,
+                  let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+                  let dpi = properties[kCGImagePropertyDPIWidth] as? NSNumber
+            else { return nil }
+            return (width.intValue, dpi.doubleValue)
+        }
+        let retinaContext = CGContext(data: nil, width: 8, height: 6, bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        retinaContext?.setFillColor(CGColor(gray: 0.5, alpha: 1))
+        retinaContext?.fill(CGRect(x: 0, y: 0, width: 8, height: 6))
+        let retinaCapture = retinaContext?.makeImage()
+        expect(retinaCapture != nil, "a Retina test capture can be drawn")
+        if let retinaCapture {
+            let plain = ScreenshotSupport.BackdropStyle(kind: .none, cornerRadius: 0)
+            let full = ScreenshotRenderer.renderExport(baseImage: retinaCapture, annotations: [],
+                                                       pixelated: nil, scale: 2,
+                                                       annotationShadowsEnabled: false,
+                                                       watermark: ScreenshotSupport.WatermarkStyle(),
+                                                       watermarkImage: nil,
+                                                       style: plain, fill: .none,
+                                                       downscaleTo1x: false)
+            expect(full?.scale == 2 && full?.image.width == 8,
+                   "a Retina export keeps its pixels and its density")
+            let halved = ScreenshotRenderer.renderExport(baseImage: retinaCapture, annotations: [],
+                                                         pixelated: nil, scale: 2,
+                                                         annotationShadowsEnabled: false,
+                                                         watermark: ScreenshotSupport.WatermarkStyle(),
+                                                         watermarkImage: nil,
+                                                         style: plain, fill: .none,
+                                                         downscaleTo1x: true)
+            expect(halved?.scale == 1 && halved?.image.width == 4,
+                   "the 1x option halves the pixels and reports 1x density")
+            let png = encodedDensity(ScreenshotRenderer.pngData(from: retinaCapture, scale: 2))
+            expect(png?.width == 8 && png?.dpi == 144,
+                   "a Retina PNG carries 144 DPI over every pixel")
+            let tiff = encodedDensity(ScreenshotRenderer.tiffData(from: retinaCapture, scale: 2))
+            expect(tiff?.width == 8 && tiff?.dpi == 144,
+                   "the pasteboard TIFF carries the same density as the PNG")
+            expect(encodedDensity(ScreenshotRenderer.pngData(from: retinaCapture, scale: 1))?.dpi == 72,
+                   "a 1x picture stays at 72 DPI")
+            expect(ScreenshotSupport.captureScale(fromDPI: png?.dpi) == 2,
+                   "the stored density reads back as the capture scale")
+        }
         expect(ScreenshotSupport.backdropPadding(for: CGSize(width: 100, height: 100), factor: 0.5) == 24,
                "backdrop padding keeps a floor for tiny captures")
         expect(ScreenshotSupport.backdropPadding(for: CGSize(width: 4000, height: 4000), factor: 1)
@@ -19069,6 +19139,189 @@ struct MetricsTests {
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotBackdropStyle] as? String == ""
                 && Defaults.registeredDefaults[DefaultsKey.screenshotBackdropPresets] as? String == "[]",
                "backdrop style and presets register empty")
+
+        // Watermark: the mark of your own that rides along every capture.
+        let textMark = ScreenshotSupport.WatermarkStyle(kind: .text, text: "  Vorssaint  ",
+                                                        color: "blue", anchor: .topLeading,
+                                                        size: 0.5, opacity: 0.3, rotation: 30)
+        let markRoundTrip = ScreenshotSupport.WatermarkStyle.decoded(textMark.encoded())
+        expect(markRoundTrip == textMark.sanitized() && markRoundTrip.text == "Vorssaint"
+                && markRoundTrip.anchor == .topLeading && markRoundTrip.rotation == 30,
+               "a watermark style round-trips through JSON, trimmed")
+        expect(ScreenshotSupport.WatermarkStyle.decoded(nil).kind == .none
+                && ScreenshotSupport.WatermarkStyle.decoded("").kind == .none
+                && ScreenshotSupport.WatermarkStyle.decoded("not json").kind == .none,
+               "a missing or broken watermark style falls back to none")
+        expect(ScreenshotSupport.WatermarkStyle(kind: .text, text: "   ").sanitized().kind == .none
+                && ScreenshotSupport.WatermarkStyle(kind: .image, imagePath: nil).sanitized().kind == .none
+                && ScreenshotSupport.WatermarkStyle(kind: .image, imagePath: "").sanitized().kind == .none,
+               "a watermark without its text or picture demotes to none")
+        let wildMark = ScreenshotSupport.WatermarkStyle(kind: .text, text: "x", color: "bogus",
+                                                        size: 7, opacity: 0, rotation: 400).sanitized()
+        expect(wildMark.color == "white" && wildMark.size == 1 && wildMark.opacity == 0.05
+                && wildMark.rotation == 90,
+               "watermark sliders clamp and an unknown color reads as white")
+        let brokenMark = ScreenshotSupport.WatermarkStyle(kind: .text, text: "x", size: .nan,
+                                                          opacity: .infinity, rotation: -.infinity)
+            .sanitized()
+        expect(brokenMark.size == 0.3 && brokenMark.opacity == 0.4 && brokenMark.rotation == 0,
+               "non-finite watermark sliders reset to their defaults")
+        expect(ScreenshotSupport.WatermarkStyle(kind: .text, text: String(repeating: "a", count: 500))
+                .sanitized().text.count == ScreenshotSupport.WatermarkStyle.textLimit,
+               "watermark text is capped")
+        expect(Defaults.registeredDefaults[DefaultsKey.screenshotWatermarkStyle] as? String == ""
+                && Defaults.registeredDefaults[DefaultsKey.screenshotWatermarkPresets] as? String == "[]",
+               "the watermark style and presets register empty")
+        let markPresets = [textMark.sanitized(),
+                           ScreenshotSupport.WatermarkStyle(kind: .image, imagePath: "/logo.png",
+                                                            anchor: .center, size: 0.8,
+                                                            opacity: 0.2, rotation: -45)]
+        expect(ScreenshotSupport.decodedWatermarkPresets(
+                ScreenshotSupport.encodedWatermarkPresets(markPresets)) == markPresets,
+               "saved watermarks round-trip through JSON with their placement")
+        expect(ScreenshotSupport.decodedWatermarkPresets("junk").isEmpty
+                && ScreenshotSupport.decodedWatermarkPresets(nil).isEmpty
+                && ScreenshotSupport.decodedWatermarkPresets(
+                    ScreenshotSupport.encodedWatermarkPresets(
+                        [ScreenshotSupport.WatermarkStyle(kind: .text, text: " ")])).isEmpty,
+               "broken preset lists and marks without content decode to nothing")
+        expect(ScreenshotSupport.decodedWatermarkPresets(
+                ScreenshotSupport.encodedWatermarkPresets(
+                    Array(repeating: markPresets[0], count: 40))).count
+                == ScreenshotSupport.backdropPresetLimit,
+               "saved watermarks cap at the presets limit")
+
+        let hdCanvas = CGSize(width: 1920, height: 1080)
+        expect(ScreenshotSupport.watermarkFontSize(for: hdCanvas, factor: 0) == 22
+                && ScreenshotSupport.watermarkFontSize(for: hdCanvas, factor: 1) == 173
+                && ScreenshotSupport.watermarkFontSize(for: CGSize(width: 20, height: 20), factor: 0) == 8,
+               "watermark text scales with the short side and keeps a legible floor")
+        expect(ScreenshotSupport.watermarkImageWidth(for: CGSize(width: 1000, height: 500), factor: 0) == 50
+                && ScreenshotSupport.watermarkImageWidth(for: CGSize(width: 1000, height: 500), factor: 1) == 500
+                && ScreenshotSupport.watermarkImageWidth(for: CGSize(width: 1000, height: 500), factor: 2) == 500,
+               "a watermark picture spans from a corner mark to half the width")
+        let markCanvas = CGSize(width: 1000, height: 600)
+        let markSize = CGSize(width: 200, height: 50)
+        let cornerMark = ScreenshotSupport.watermarkPlacement(contentSize: markSize, rotation: 0,
+                                                              anchor: .bottomTrailing, in: markCanvas)
+        expect(cornerMark?.fit == 1 && cornerMark?.center == CGPoint(x: 870, y: 545),
+               "an upright mark sits against the bottom-right margin")
+        expect(ScreenshotSupport.watermarkPlacement(contentSize: markSize, rotation: 0,
+                                                    anchor: .center, in: markCanvas)?.center
+                == CGPoint(x: 500, y: 300),
+               "a centered mark sits in the middle of the capture")
+        let turnedMark = ScreenshotSupport.watermarkPlacement(contentSize: markSize, rotation: 90,
+                                                              anchor: .topLeading, in: markCanvas)
+        expectClose(Double(turnedMark?.center.x ?? 0), 55, "a turned mark is placed by its turned width")
+        expectClose(Double(turnedMark?.center.y ?? 0), 130, "a turned mark is placed by its turned height")
+        let wideMark = ScreenshotSupport.watermarkPlacement(contentSize: CGSize(width: 2000, height: 100),
+                                                            rotation: 0, anchor: .bottomTrailing,
+                                                            in: markCanvas)
+        expectClose(Double(wideMark?.fit ?? 0), 0.47, "a mark wider than the capture shrinks to the margins")
+        expectClose(Double(wideMark?.center.x ?? 0), 500, "a shrunk mark spans the width between the margins")
+        expect(ScreenshotSupport.watermarkPlacement(contentSize: .zero, rotation: 0,
+                                                    anchor: .center, in: markCanvas) == nil
+                && ScreenshotSupport.watermarkPlacement(contentSize: markSize, rotation: .nan,
+                                                        anchor: .center, in: markCanvas) == nil,
+               "an empty or non-finite mark has no placement")
+
+        // The exporter draws the mark where the placement says, over the
+        // capture, and nothing at all while it is off.
+        func solidImage(width: Int, height: Int, gray: CGFloat) -> CGImage? {
+            let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                    bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            context?.setFillColor(CGColor(gray: gray, alpha: 1))
+            context?.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            return context?.makeImage()
+        }
+        func exportPixels(_ image: CGImage) -> [UInt8]? {
+            var data = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            let drawn = data.withUnsafeMutableBytes { buffer -> Bool in
+                guard let context = CGContext(data: buffer.baseAddress, width: image.width,
+                                              height: image.height, bitsPerComponent: 8,
+                                              bytesPerRow: image.width * 4,
+                                              space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                else { return false }
+                context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+                return true
+            }
+            return drawn ? data : nil
+        }
+        // A bitmap's first row is its top, so memory rows read in the
+        // annotations' top-left space.
+        func channel(_ data: [UInt8], width: Int, height: Int, x: Int, y: Int, _ index: Int) -> Int {
+            Int(data[(y * width + x) * 4 + index])
+        }
+        func isWhite(_ data: [UInt8], width: Int, height: Int, x: Int, y: Int) -> Bool {
+            (0..<3).allSatisfy { channel(data, width: width, height: height, x: x, y: y, $0) == 255 }
+        }
+        func markedExport(_ watermark: ScreenshotSupport.WatermarkStyle,
+                          picture: CGImage?, base: CGImage) -> [UInt8]? {
+            ScreenshotRenderer.renderExport(baseImage: base, annotations: [], pixelated: nil,
+                                            scale: 1, annotationShadowsEnabled: false,
+                                            watermark: watermark, watermarkImage: picture,
+                                            style: ScreenshotSupport.BackdropStyle(kind: .none,
+                                                                                   cornerRadius: 0),
+                                            fill: .none, downscaleTo1x: false)
+                .flatMap { exportPixels($0.image) }
+        }
+        let markWidth = 120
+        let markHeight = 80
+        if let white = solidImage(width: markWidth, height: markHeight, gray: 1),
+           let stamp = solidImage(width: 4, height: 4, gray: 0) {
+            let untouched = markedExport(ScreenshotSupport.WatermarkStyle(), picture: nil, base: white)
+            expect(untouched.map { data in
+                (0..<markWidth).allSatisfy { x in
+                    (0..<markHeight).allSatisfy { y in
+                        isWhite(data, width: markWidth, height: markHeight, x: x, y: y)
+                    }
+                }
+            } == true, "no watermark leaves the capture untouched")
+            let textStamp = ScreenshotSupport.WatermarkStyle(kind: .text, text: "X", color: "black",
+                                                             anchor: .bottomTrailing, size: 1,
+                                                             opacity: 1)
+            let stamped = markedExport(textStamp, picture: nil, base: white)
+            expect(stamped.map { data in
+                (100..<markWidth).contains { x in
+                    (56..<markHeight).contains { y in
+                        !isWhite(data, width: markWidth, height: markHeight, x: x, y: y)
+                    }
+                }
+            } == true, "a text watermark lands in its corner of the export")
+            expect(stamped.map { data in
+                (0..<60).allSatisfy { x in
+                    (0..<40).allSatisfy { y in
+                        isWhite(data, width: markWidth, height: markHeight, x: x, y: y)
+                    }
+                }
+            } == true, "a corner text watermark leaves the opposite corner alone")
+            let pictureStamp = ScreenshotSupport.WatermarkStyle(kind: .image, imagePath: "/stamp.png",
+                                                                anchor: .topLeading, size: 1,
+                                                                opacity: 1)
+            let pictured = markedExport(pictureStamp, picture: stamp, base: white)
+            // Width factor 1 is half the capture, 60 pixels, so the picture
+            // fills the top-left 4...64 square behind the 5% margin.
+            expect(pictured.map { data in
+                channel(data, width: markWidth, height: markHeight, x: 34, y: 10, 0) < 40
+                    && channel(data, width: markWidth, height: markHeight, x: 62, y: 62, 0) < 40
+                    && isWhite(data, width: markWidth, height: markHeight, x: 66, y: 34)
+                    && isWhite(data, width: markWidth, height: markHeight, x: 34, y: 70)
+                    && isWhite(data, width: markWidth, height: markHeight, x: 100, y: 70)
+            } == true, "a picture watermark covers exactly its placed square")
+            let faded = markedExport(
+                ScreenshotSupport.WatermarkStyle(kind: .image, imagePath: "/stamp.png",
+                                                 anchor: .topLeading, size: 1, opacity: 0.5),
+                picture: stamp, base: white)
+            expect(faded.map { data in
+                let value = channel(data, width: markWidth, height: markHeight, x: 34, y: 34, 0)
+                return value > 100 && value < 160
+            } == true, "a faded watermark lets the capture through")
+            expect(markedExport(pictureStamp, picture: nil, base: white).map { data in
+                isWhite(data, width: markWidth, height: markHeight, x: 34, y: 34)
+            } == true, "a picture watermark whose file is missing draws nothing")
+        }
 
         let wordBoxes = [CGRect(x: 0, y: 0, width: 40, height: 10),
                          CGRect(x: 50, y: 0, width: 40, height: 10),
@@ -19523,8 +19776,8 @@ struct MetricsTests {
                "screenshot number shortcuts ship enabled")
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotPreviewPosition] as? String == "",
                "screenshot preview placement preserves the existing automatic behavior by default")
-        expect(Defaults.registeredDefaults[DefaultsKey.screenshotPreviewTakesFocus] as? Bool == false,
-               "the screenshot preview leaves the keyboard where it was by default; taking it is the opt-in")
+        expect(Defaults.registeredDefaults[DefaultsKey.screenshotPreviewTakesFocus] as? Bool == true,
+               "the screenshot preview takes the keyboard as it appears by default, so its shortcuts work at once; leaving it is the opt-out")
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotSharingEnabled] as? Bool == true,
                "temporary screenshot links preserve their existing availability by default")
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotToolOrder] as? String
@@ -21670,6 +21923,7 @@ struct MetricsTests {
             DefaultsKey.mediaImageRenamePattern,
             DefaultsKey.mediaImageBackground,
             DefaultsKey.mediaImagePreserveModificationDate,
+            DefaultsKey.mediaImageSaveInSubfolder,
             DefaultsKey.mediaImageProfiles,
             DefaultsKey.mediaImageSelectedProfileID,
         ]).isSubset(of: backupKeys),
@@ -23663,12 +23917,17 @@ struct MetricsTests {
         expect(RecorderSupport.outputSize(source: CGSize(width: 2940, height: 1912), quality: .high)
                 == CGSize(width: 2940, height: 1912),
                "the high preset keeps every pixel")
+        expect(RecorderSupport.outputSize(source: CGSize(width: 2940, height: 1912), quality: .balanced)
+                == CGSize(width: 2940, height: 1912),
+               "the default preset keeps every pixel too, so text stays as sharp as on screen")
         let highRate = RecorderSupport.averageBitRate(width: 2940, height: 1912, fps: 60,
                                                       quality: .high)
+        let balancedRate = RecorderSupport.averageBitRate(width: 2940, height: 1912, fps: 60,
+                                                          quality: .balanced)
         let smallRate = RecorderSupport.averageBitRate(width: 1470, height: 956, fps: 60,
                                                        quality: .small)
-        expect(highRate > smallRate,
-               "a bigger picture at a higher preset asks the encoder for more")
+        expect(highRate > balancedRate && balancedRate > smallRate,
+               "the presets differ by bits, and only the small one by pixels")
         expect(RecorderSupport.averageBitRate(width: 64, height: 64, fps: 30, quality: .small)
                 >= 800_000,
                "even a tiny area gets a usable stream")
@@ -24236,8 +24495,7 @@ struct MetricsTests {
         // The typing sampler fills an array from an NSEvent monitor callback
         // while the stop path reads it, so the append has to be under the
         // lock: an unsynchronised one races the copy-on-write buffer. The
-        // recording's start time is written by `start()` and read from that
-        // same callback, so it belongs under the lock too.
+        // recording's origin and pause state belong to its shared clock.
         let typingSampler = ((try? String(
             contentsOfFile: "Sources/Vorssaint/Services/Recorder/RecorderTypingTrack.swift",
             encoding: .utf8)) ?? "")
@@ -24245,10 +24503,8 @@ struct MetricsTests {
             .filter { !$0.isEmpty }.joined(separator: " ")
         expect(typingSampler.contains("let lock = NSLock()"),
                "the typing sampler guards its buffer the way the pointer sampler does")
-        expect(typingSampler.contains("lock.withLock { startedAt = CACurrentMediaTime() }"),
-               "the typing sampler writes the recording's start time under the lock")
         expect(typingSampler.contains(
-            "lock.withLock { guard let time = pauseClock.eventTime(now, since: startedAt) "
+            "lock.withLock { guard let time = pauseClock.eventTime(now) "
             + "else { return } times.append(time) }"
         ), "the typing sampler appends a keystroke time only under the lock")
         // `RecorderSession.stop()` is nonisolated and async, so its body runs

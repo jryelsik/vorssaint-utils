@@ -8,9 +8,9 @@ enum NotchMusicExtrasTests {
         NotchMusicHardeningTests.run(expect: expect)
         let track = RadialNowPlayingSnapshot(title: "A & B + C", artist: "Artist / Example", album: "Studio Recording",
                                             artworkData: nil, appBundleIdentifier: "org.example.player", appPID: 42)
-        let playback = NotchPlayback(track: track, isPlaying: true, elapsed: 0, duration: 180, rate: 1,
+        var playback = NotchPlayback(track: track, isPlaying: true, elapsed: 0, duration: 180, rate: 1,
                                      sampledAt: Date(timeIntervalSinceReferenceDate: 0), canSeek: false,
-                                     itemIdentifier: "current-item")
+                                     itemIdentifier: "current-item", canSendCommandsDirectly: true)
         let identity = NotchMusicIdentity(playback)
         let lines = NotchLyricsSupport.parse("""
         [ar:Example]
@@ -77,6 +77,10 @@ enum NotchMusicExtrasTests {
         func decodeQueue() -> NotchQueueSnapshot? { NotchQueueSupport.decode(queue, requestID: request, playback: playback) }
         expect(decodeQueue()?.items.first?.offset == 2 && decodeQueue()?.canPlay == true,
                "omitting an incomplete native queue item never renumbers a later playback action")
+        playback.canSendCommandsDirectly = false
+        expect(decodeQueue()?.items.count == 1 && decodeQueue()?.canPlay == false,
+               "a cached queue preserves its songs but revokes actions when native routing becomes unavailable")
+        playback.canSendCommandsDirectly = true
         queue["queueRequest"] = UUID().uuidString
         expect(decodeQueue() == nil, "an old queue request cannot overwrite a reopened surface")
         queue["queueRequest"] = request.uuidString
@@ -151,7 +155,7 @@ enum NotchMusicExtrasTests {
                "music feature choices and online consent are accounted for by settings backup")
         for language in AppLanguage.allCases {
             let strings = Mirror(reflecting: FeatureStrings.notchMusicExtras(language)).children.compactMap { $0.value as? String }
-            expect(strings.count == 27 && strings.allSatisfy { !$0.isEmpty && !$0.contains("—") },
+            expect(strings.count == 31 && strings.allSatisfy { !$0.isEmpty && !$0.contains("—") },
                    "music extras have complete user-facing strings in \(language.rawValue)")
         }
     }

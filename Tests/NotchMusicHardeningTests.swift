@@ -104,6 +104,27 @@ enum NotchQueueContract {
     typealias NotchQueueSupport = Preferences
 }
 
+/// Production control and recovery methods run with a deterministic scheduler
+/// and a recording pipe, without a player process or a window.
+enum NotchMusicCommandContract {
+    enum NotchQueueSupport { static func isEnabled() -> Bool { true } }
+    final class Scheduler {
+        var jobs: [() -> Void] = []
+        func async(execute action: @escaping () -> Void) { jobs.append(action) }
+        func asyncAfter(deadline: DispatchTime, execute work: DispatchWorkItem) { jobs.append { work.perform() } }
+        func drain() { while !jobs.isEmpty { jobs.removeFirst()() } }
+    }
+    enum DispatchQueue { static var main = Scheduler() }
+    final class Process { var isRunning = true }
+    final class Pipe {
+        let fileHandleForWriting = Handle()
+        final class Handle {
+            var written: [Data] = []
+            func write(contentsOf data: Data) throws { written.append(data) }
+        }
+    }
+}
+
 enum NotchMusicHardeningTests {
     private final class Scheduler {
         var work: [() -> Void] = []
@@ -120,6 +141,8 @@ enum NotchMusicHardeningTests {
         queueSelection(expect: expect)
         framing(expect: expect)
         pendingCommands(expect: expect)
+        controlLifecycle(expect: expect)
+        NotchMusicAutomationTests.run(expect: expect)
     }
 
     private static func sourcePriority(expect: (Bool, String) -> Void) {
@@ -359,25 +382,32 @@ enum NotchMusicHardeningTests {
         let request = UUID()
         let large = NotchQueueSelection(requestID: request, pid: 42,
             currentIdentifier: String(repeating: "c", count: 512), itemIdentifier: String(repeating: "n", count: 512), offset: 20)
-        let commands: [NotchPlaybackCommand] = [.queue(request), .queuePlay(large), .queueStop, .previous, .next]
+        let context = NotchPlaybackContext(pid: 42, revision: UUID())
+        let commands = [NotchPlaybackCommand.queue(request), .queuePlay(large), .queueStop, .previous, .next]
+            .map { NotchPlaybackRequest(command: $0, context: context) }
         let batch = Data(commands.compactMap(\.message).map { $0 + "\n" }.joined().utf8)
         expect(batch.count > 1024, "the framing fixture exceeds the old combined-buffer limit")
         var framer = NotchPlaybackCommandFramer()
         expect(framer.append(batch).compactMap { $0 } == commands, "one pipe delivery preserves every complete command, including queue-stop")
         var split = NotchPlaybackCommandFramer()
-        var decoded: [NotchPlaybackCommand] = []
+        var decoded: [NotchPlaybackRequest] = []
         for byte in batch { decoded += split.append(Data([byte])).compactMap { $0 } }
         expect(decoded == commands, "commands survive arbitrary byte boundaries")
         var bad = NotchPlaybackCommandFramer()
-        let oversized = Data((String(repeating: "x", count: NotchPlaybackCommand.maximumMessageBytes + 1) + "\nqueue-stop\nnext\n").utf8)
+        let next = NotchPlaybackRequest(command: .next, context: context)
+        let oversized = Data((String(repeating: "x", count: NotchPlaybackCommand.maximumMessageBytes + 1) + "\nqueue-stop\n" + next.message! + "\n").utf8)
         let recovered = bad.append(oversized)
-        expect(recovered.count == 3 && recovered[0] == nil && recovered[1] == .queueStop && recovered[2] == .next,
+        expect(recovered.count == 3 && recovered[0] == nil && recovered[1]?.command == .queueStop && recovered[2] == next,
                "an oversized frame cannot swallow the following cancellation or valid command")
         var unterminated = NotchPlaybackCommandFramer()
         expect(unterminated.append(Data(String(repeating: "x", count: 100_000).utf8)).isEmpty,
                "a long unterminated frame is discarded without retaining the growing input")
-        expect(unterminated.append(Data("\nqueue-stop\n".utf8)).compactMap { $0 } == [.queueStop],
+        expect(unterminated.append(Data("\nqueue-stop\n".utf8)).compactMap { $0?.command } == [.queueStop],
                "the framer resumes at the next newline after a rejected partial frame")
+        for message in ["toggle", "next", "previous", "seek 75", "play 0 \(context.revision) next",
+                        "play 42 invalid next", "play 42 \(context.revision) queue-stop"] {
+            expect(NotchPlaybackRequest(message: message) == nil, "unbound or malformed playback context cannot reach native dispatch")
+        }
     }
 
     private static func pendingCommands(expect: (Bool, String) -> Void) {
@@ -387,7 +417,7 @@ enum NotchMusicHardeningTests {
         var failures = 0
         func write(_ data: Data) throws {
             let message = String(data: data, encoding: .utf8)!.trimmingCharacters(in: .newlines)
-            if let command = NotchPlaybackCommand(message: message) { written.append(command) }
+            if let request = NotchPlaybackRequest(message: message) { written.append(request.command) }
         }
         let first = UUID(), second = UUID()
         writer.start(); writer.setQueueRequest(first)
@@ -404,7 +434,8 @@ enum NotchMusicHardeningTests {
         scheduler.drain()
         expect(written == [.queue(second)], "replacing the queue request cancels an unsent play from the previous surface")
         written.removeAll()
-        _ = writer.submit(.previous, write: write, failed: { failures += 1 })
+        let context = NotchPlaybackContext(pid: 42, revision: UUID())
+        _ = writer.submit(.previous, context: context, write: write, failed: { failures += 1 })
         writer.stop(); writer.start()
         scheduler.drain()
         expect(written.isEmpty, "a new adapter process cannot inherit an old pending transport command")
@@ -417,6 +448,117 @@ enum NotchMusicHardeningTests {
         _ = writer.submit(.queue(first), write: { _ in writer.stop(); throw NSError(domain: "Test", code: 1) }, failed: { failures += 1 })
         scheduler.drain()
         expect(failures == 1, "a retired request's write failure cannot alter its replacement")
-        expect(!writer.submit(.next, write: write, failed: { failures += 1 }), "stopped transports reject new commands immediately")
+        expect(!writer.submit(.next, context: context, write: write, failed: { failures += 1 }), "stopped transports reject new commands immediately")
+    }
+
+    private static func controlLifecycle(expect: (Bool, String) -> Void) {
+        typealias Contract = NotchMusicCommandContract
+        typealias Adapter = NotchPlaybackRoutingContract
+        Contract.DispatchQueue.main = Contract.Scheduler()
+        defer {
+            Contract.DispatchQueue.main = Contract.Scheduler()
+            Adapter.metadata = [:]
+            Adapter.publish(nil)
+        }
+        let service = Contract.Service()
+        let nativePath = NSObject()
+        let native = Adapter.Target(pid: 42, path: nativePath)
+        var metadata: [String: Any] = ["kMRMediaRemoteNowPlayingInfoTitle": "same-title",
+                                      "kMRMediaRemoteNowPlayingInfoContentItemIdentifier": "A"]
+        Adapter.metadata[ObjectIdentifier(nativePath)] = metadata
+        let context = Adapter.publish(native, info: metadata)!
+        var current = playback("same-title")
+        current.commandContext = context
+        current.canSendCommandsDirectly = true
+        service.start()
+        service.playback = current
+        service.seek(to: 75, in: current.track, context: context)
+        service.queue.drain()
+        func requests() -> [NotchPlaybackRequest] {
+            (service.input?.fileHandleForWriting.written ?? []).compactMap {
+                String(data: $0, encoding: .utf8).flatMap {
+                    NotchPlaybackRequest(message: $0.trimmingCharacters(in: .newlines))
+                }
+            }
+        }
+        // The shared playback helper disables seeking; explicitly enable it for this control fixture.
+        expect(requests().isEmpty, "read-only native playback cannot enqueue a seek")
+        current = NotchPlayback(track: current.track, isPlaying: true, elapsed: 0, duration: 180, rate: 1,
+                                sampledAt: Date(), canSeek: true, itemIdentifier: "A", commandContext: context,
+                                canSendCommandsDirectly: true)
+        service.playback = current
+        service.seek(to: 75, in: current.track, context: context)
+        service.queue.drain()
+        expect(requests().last == NotchPlaybackRequest(command: .seek(75), context: context),
+               "the production seek and writer preserve the gesture's process and recording revision")
+        Adapter.command = nil
+        Adapter.sendPlaybackCommand(requests().last!)
+        expect(Adapter.command == 24 && Adapter.destination === nativePath,
+               "a stable gesture traverses the real writer, decoder, validation and native dispatch")
+        var changed = current
+        metadata["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"] = "B"
+        Adapter.metadata[ObjectIdentifier(nativePath)] = metadata
+        changed.commandContext = Adapter.publish(native, info: metadata)
+        Adapter.command = nil
+        Adapter.sendPlaybackCommand(requests().last!)
+        expect(Adapter.command == nil,
+               "a written gesture from the old recording is rejected when native playback changes before dispatch")
+        service.playback = changed
+        let before = requests().count
+        service.seek(to: 90, in: current.track, context: context)
+        expect(!service.send(.toggle, context: context) && !service.send(.next, context: nil),
+               "an obsolete rendered control or missing revision cannot borrow the current recording")
+        service.queue.drain()
+        expect(requests().count == before,
+               "identical visible metadata cannot retarget an earlier gesture after the recording revision changes")
+        _ = service.send(.previous)
+        service.queue.drain()
+        expect(requests().last?.context == changed.commandContext,
+               "the gesture route captures its current playback context at submission")
+        _ = service.send(.next)
+        let pipe = service.input!
+        service.stop()
+        service.queue.drain()
+        expect(pipe.fileHandleForWriting.written.count == before + 1,
+               "closing the last music consumer cancels its still-unwritten controls")
+
+        service.start()
+        let launches = service.launches
+        service.connectionEnded()
+        for _ in 0..<100 { service.start() }
+        expect(service.launches == launches && Contract.DispatchQueue.main.jobs.count == 1,
+               "preference updates cannot bypass a pending recovery or launch extra helpers")
+        Contract.DispatchQueue.main.drain()
+        expect(service.launches == launches + 1, "unexpected termination receives one delayed recovery while music is wanted")
+        service.connectionEnded()
+        Contract.DispatchQueue.main.drain()
+        service.connectionEnded()
+        for _ in 0..<100 { service.start() }
+        expect(service.launches == launches + 2 && Contract.DispatchQueue.main.jobs.isEmpty,
+               "persistent failure stops after two retries even if preferences continue changing")
+        service.stop()
+        service.start()
+        service.connectionEnded()
+        let cancelledLaunches = service.launches
+        service.stop()
+        Contract.DispatchQueue.main.drain()
+        expect(service.launches == cancelledLaunches && !service.wantsPlayback,
+               "disabling, hiding the last consumer or suspending cancels delayed recovery")
+        service.start()
+        service.connectionEnded()
+        service.stop()
+        service.start()
+        let replacementLaunches = service.launches
+        Contract.DispatchQueue.main.drain()
+        expect(service.launches == replacementLaunches,
+               "a delayed recovery from an ended subscription cannot launch inside its replacement")
+
+        for raw: Any in [true, 0, -1, 42.5, Double(Int32.max) + 1] {
+            expect(NotchPlaybackContext(reply: ["pid": raw, "playbackRevision": UUID().uuidString]) == nil,
+                   "metadata cannot bind controls to malformed process identities")
+        }
+        let raw: [String: Any] = ["pid": 42, "playbackRevision": context.revision.uuidString]
+        expect(NotchPlaybackContext(reply: raw) == context,
+               "the recording revision survives the adapter reply without depending on UUID letter case")
     }
 }

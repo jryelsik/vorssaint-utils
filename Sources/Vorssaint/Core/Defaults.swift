@@ -463,6 +463,7 @@ enum DefaultsKey {
     static let mediaImageRenamePattern = "mediaImageRenamePattern"
     static let mediaImageBackground = "mediaImageBackground"
     static let mediaImagePreserveModificationDate = "mediaImagePreserveModificationDate"
+    static let mediaImageSaveInSubfolder = "mediaImageSaveInSubfolder"
     static let mediaImageProfiles = "mediaImageProfiles"
     static let mediaImageSelectedProfileID = "mediaImageSelectedProfileID"
     static let mediaTextAccurate = "mediaTextAccurate"
@@ -590,6 +591,8 @@ enum DefaultsKey {
     static let screenshotToolShortcutsEnabled = "screenshotToolShortcutsEnabled"
     static let screenshotBackdropStyle = "screenshotBackdropStyle"
     static let screenshotBackdropPresets = "screenshotBackdropPresets"
+    static let screenshotWatermarkStyle = "screenshotWatermarkStyle"
+    static let screenshotWatermarkPresets = "screenshotWatermarkPresets"
     static let screenshotOpenEditorDirectly = "screenshotOpenEditorDirectly"
     static let screenshotCopyToClipboard = "screenshotCopyToClipboard"
     static let screenshotPreviewPosition = "screenshotPreviewPosition"
@@ -702,6 +705,10 @@ enum DefaultsKey {
     static let notchEnabled = "notchEnabled"
     static let notchDisplay = "notchDisplay"
     static let notchOpenOnHover = "notchOpenOnHover"
+    static let notchHideUntilHover = "notchHideUntilHover"
+    static let notchHoverDelay = "notchHoverDelay"
+    static let notchReturnHome = "notchReturnHome"
+    static let notchHomeModule = "notchHomeModule"
     static let notchHiddenModules = "notchHiddenModules"
     static let notchModuleOrder = "notchModuleOrder"
     static let notchQuickAccessLayout = "notchQuickAccessLayout"
@@ -1144,6 +1151,10 @@ enum Defaults {
         DefaultsKey.notchEnabled: false,
         DefaultsKey.notchDisplay: NotchDisplay.automatic.rawValue,
         DefaultsKey.notchOpenOnHover: true,
+        DefaultsKey.notchHideUntilHover: false,
+        DefaultsKey.notchHoverDelay: NotchSupport.defaultHoverDelay,
+        DefaultsKey.notchReturnHome: false,
+        DefaultsKey.notchHomeModule: NotchModule.controls.rawValue,
         DefaultsKey.notchHiddenModules: "",
         DefaultsKey.notchModuleOrder: "",
         DefaultsKey.notchQuickAccessLayout: Data(),
@@ -1363,6 +1374,7 @@ enum Defaults {
         DefaultsKey.mediaImageRenamePattern: "",
         DefaultsKey.mediaImageBackground: MediaImageBackground.transparent.rawValue,
         DefaultsKey.mediaImagePreserveModificationDate: false,
+        DefaultsKey.mediaImageSaveInSubfolder: false,
         DefaultsKey.mediaImageProfiles: "[]",
         DefaultsKey.mediaImageSelectedProfileID: "",
         DefaultsKey.mediaTextAccurate: true,
@@ -1487,10 +1499,12 @@ enum Defaults {
         DefaultsKey.screenshotToolShortcuts: "",
         DefaultsKey.screenshotBackdropStyle: "",
         DefaultsKey.screenshotBackdropPresets: "[]",
+        DefaultsKey.screenshotWatermarkStyle: "",
+        DefaultsKey.screenshotWatermarkPresets: "[]",
         DefaultsKey.screenshotOpenEditorDirectly: false,
         DefaultsKey.screenshotCopyToClipboard: false,
         DefaultsKey.screenshotPreviewPosition: ScreenshotSupport.QuickPreviewPosition.automatic.rawValue,
-        DefaultsKey.screenshotPreviewTakesFocus: false,
+        DefaultsKey.screenshotPreviewTakesFocus: true,
         DefaultsKey.screenshotSharingEnabled: true,
         DefaultsKey.panelUtilityScreenshot: true,
         DefaultsKey.windowLayoutShortcutsEnabled: false,

@@ -42,7 +42,7 @@ enum FeatureGroup: String, CaseIterable {
 /// System permissions surfaced by the hub's transparency portal.
 enum AppPermission: String, CaseIterable {
     case accessibility, screenRecording, fullDiskAccess, filesAndFolders, notifications,
-         automationFinder, automationTerminal, audioCapture, microphone, camera, appManagement, calendar
+         automationFinder, automationTerminal, automationPlayback, audioCapture, microphone, camera, appManagement, calendar
 }
 
 enum PermissionPollingSupport {
@@ -278,7 +278,7 @@ extension AppFeature {
         case .notchDownloads: return [.filesAndFolders]
         case .notchNotifications: return [.accessibility]
         case .notchCalendar: return [.calendar]
-        case .notch: return [.accessibility]
+        case .notch: return [.accessibility, .automationPlayback]
         case .mouseAcceleration:
             return []
         case .scrollInverter, .focusFollowsMouse, .smoothScroll, .mouseNavigation, .mouseButtonShortcuts, .middleClick,
@@ -361,6 +361,8 @@ extension AppFeature {
             let keys = feature.enabledKeys
             guard keys.isEmpty || keys.contains(where: boolFor) else { return false }
             switch (feature, permission) {
+            case (.notch, .automationPlayback):
+                return !(stringFor(DefaultsKey.notchHiddenModules) ?? "").split(separator: ",").contains("music")
             case (.switcher, .screenRecording):
                 return !boolFor(DefaultsKey.switcherSimpleMode)
             case (.notchNotifications, .accessibility):
@@ -459,7 +461,7 @@ extension AppPermission {
         case .fullDiskAccess: return "externaldrive.badge.person.crop"
         case .filesAndFolders: return "folder.badge.person.crop"
         case .notifications: return "bell.badge"
-        case .automationFinder, .automationTerminal: return "gearshape.2"
+        case .automationFinder, .automationTerminal, .automationPlayback: return "gearshape.2"
         case .audioCapture: return "waveform"
         case .microphone: return "mic"
         case .calendar: return "calendar"
