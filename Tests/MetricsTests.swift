@@ -33,13 +33,17 @@ struct MetricsTests {
             ("recording", {
                 RecorderSampleTimingTests.run { suite.expect($0, $1) }
                 RecorderWriterTests.run { suite.expect($0, $1) }
+                RecorderExportChipTests.run { suite.expect($0, $1) }
             }),
             ("network", { SpeedTestTests.run { suite.expect($0, $1) } }),
             ("app-updates", { AppUpdatesContract.run(suite) }),
             ("localization", { LocalizationTests.run(suite) }),
             ("cleaner", { CleanerEligibilityTests.run(suite) }),
+            ("uninstaller", { UninstallerFlowTests.run(suite) }),
             ("launcher", { QuickLauncherContract.run(suite) }),
-            ("switcher", { SwitcherScrollContract.run(suite) }),
+            ("switcher", { SwitcherScrollContract.run(suite); SwitcherActivationTests.run(suite) }),
+            ("keep-awake", { KeepAwakeCatalogContract.run(suite) }),
+            ("emoji", { CommandBarEmojiContract.run(suite) }),
         ]
         var selected = Set<String>()
         var listOnly = false
@@ -67,6 +71,7 @@ struct MetricsTests {
 
     private static func coreChecks(_ suite: TestSuite) {
         ScreenshotWatermarkTests.run(suite)
+        MixerNativeDragTests.run(suite)
         func expect(_ condition: Bool, _ message: @autoclosure () -> String,
                     file: StaticString = #filePath, line: UInt = #line) {
             suite.expect(condition, message(), file: file, line: line)
@@ -90,6 +95,7 @@ struct MetricsTests {
         NotchTests.run { expect($0, $1) }
         NotchVolumeKeyTests.run { expect($0, $1) }
         MixerOutputAdjustmentContract.run(suite)
+        MixerInputVolumeContract.run(suite)
 
         // MARK: Byte / rate formatting
 
@@ -3870,16 +3876,16 @@ struct MetricsTests {
         // decision above is made consciously, never by omission.
         let releasePlist = NSDictionary(contentsOfFile: "Resources/Info.plist")
         let plistVersion = (releasePlist?["CFBundleShortVersionString"] as? String) ?? ""
-        expect(plistVersion == "3.4.0-beta.2",
+        expect(plistVersion == "3.4.0-beta.2.1",
                "bumping the app version requires re-deciding the support prompt pin above")
         let plistBuild = (releasePlist?["CFBundleVersion"] as? String) ?? ""
-        expect(plistBuild == "88",
+        expect(plistBuild == "89",
                "every app version needs its own incremented bundle build")
         expect(SupportUpdateIntroInfo.releaseVersion == "3.3.2",
                "the support prompt remains deliberately pinned to 3.3.2")
         expect(UpdateHighlightsInfo.releaseVersion == "3.4.0-beta.1",
                "the prepared tour belongs to the first 3.4 beta without changing the installed version")
-        for version in ["3.4.0-beta.1", "3.4.0-beta.2", "3.4.0-beta.10"] {
+        for version in ["3.4.0-beta.1", "3.4.0-beta.2", "3.4.0-beta.2.1", "3.4.0-beta.10"] {
             expect(UpdateHighlightsInfo.shouldShow(appVersion: version, lastSeenVersion: nil)
                    && UpdateHighlightsInfo.shouldShow(appVersion: version, lastSeenVersion: "3.3.3"),
                    "the notch tour introduces this beta cycle to new and returning users")
@@ -3888,7 +3894,7 @@ struct MetricsTests {
             expect(!SupportUpdateIntroInfo.shouldShow(appVersion: version, lastSeenVersion: nil),
                    "beta updates do not request the support and social introduction")
         }
-        for version in ["3.3.5", "3.4.0", "3.4.1", "3.4.0-rc.1", "3.4.0-beta.0", "3.4.0-beta.no", "3.5.0-beta.1", "4.0.0"] {
+        for version in ["3.3.5", "3.4.0", "3.4.1", "3.4.0-rc.1", "3.4.0-beta.0", "3.4.0-beta.no", "3.4.0-beta.2.no", "3.4.0-beta.2.1.1", "3.5.0-beta.1", "4.0.0"] {
             expect(!UpdateHighlightsInfo.matchesRelease(version)
                    && !UpdateHighlightsInfo.shouldShow(appVersion: version, lastSeenVersion: nil),
                    "previewing from the current build and other release cycles cannot consume the future beta tour")
@@ -4807,6 +4813,14 @@ struct MetricsTests {
                 && Defaults.registeredDefaults[DefaultsKey.windowLayoutShortcutCenterHalf] as? String
                     == WindowLayoutAction.clearedShortcutStorageValue,
                "center half starts with no combination of its own")
+        expect(WindowLayoutAction.allCases.contains(.centerTwoThirds)
+                && WindowLayoutAction.centerTwoThirds.shortcutID == 56
+                && WindowLayoutAction(shortcutID: 56) == .centerTwoThirds,
+               "center two thirds exists and answers to its own shortcut id")
+        expect(WindowLayoutAction.centerTwoThirds.defaultShortcut == nil
+                && Defaults.registeredDefaults[DefaultsKey.windowLayoutShortcutCenterTwoThirds] as? String
+                    == WindowLayoutAction.clearedShortcutStorageValue,
+               "center two thirds starts with no combination of its own")
         expect(Set(WindowLayoutAction.allCases.map(\.shortcutID)).count
                 == WindowLayoutAction.allCases.count,
                "every layout action keeps a distinct shortcut id")
@@ -4814,7 +4828,8 @@ struct MetricsTests {
             let layoutStrings = FeatureStrings.windowLayout(language)
             expect(!layoutStrings.fullScreen.isEmpty && !layoutStrings.previousDisplay.isEmpty
                     && !layoutStrings.marginMaximize.isEmpty
-                    && !layoutStrings.centerHalf.isEmpty,
+                    && !layoutStrings.centerHalf.isEmpty
+                    && !layoutStrings.centerTwoThirds.isEmpty,
                    "\(language.rawValue) names the latest window layout actions")
         }
         expect(WindowLayoutGeometry.accepts(actualRect: .zero, targetRect: .zero,
@@ -6483,6 +6498,9 @@ struct MetricsTests {
         expect(WindowLayoutGeometry.rect(for: .centerHalf, current: currentWindow, visibleFrame: visibleFrame)
                == CGRect(x: 360, y: 40, width: 720, height: 860),
                "window layout center half sits half wide in the middle of the screen")
+        expect(WindowLayoutGeometry.rect(for: .centerTwoThirds, current: currentWindow, visibleFrame: visibleFrame)
+               == CGRect(x: 240, y: 40, width: 960, height: 860),
+               "window layout center two thirds sits two thirds wide in the middle of the screen")
         expect(WindowLayoutGeometry.rect(for: .leftHalf, current: currentWindow, visibleFrame: visibleFrame,
                                          windowGap: 16)
                == CGRect(x: 0, y: 40, width: 712, height: 860),
@@ -8225,6 +8243,80 @@ struct MetricsTests {
                                                                        selectedUnavailable: true,
                                                                        shouldApplyPreferred: false),
                "missing preferred input falls back visually without deleting preference")
+        do {
+            let original = ["app.a", "app.b", "app.c", "app.d"]
+            var layout = MixerAppArrangement()
+            expect(layout.ordered(original, identity: { $0 }) == original,
+                   "mixer keeps alphabetical input until the user arranges it")
+            layout.move("app.c", offset: -1, visibleIDs: original)
+            let arranged = ["app.a", "app.c", "app.b", "app.d"]
+            expect(layout.ordered(original, identity: { $0 }) == arranged,
+                   "mixer moves an app to its chosen position")
+            let reopened = MixerAppArrangement(rawValue: layout.rawValue)
+            expect(reopened.ordered(["app.a", "app.b", "app.d"], identity: { $0 }) == ["app.a", "app.b", "app.d"]
+                   && reopened.ordered(original, identity: { $0 }) == arranged,
+                   "closing and reopening an app or mixer preserves its position")
+            layout.move("app.d", offset: -1, visibleIDs: ["app.a", "app.b", "app.d"])
+            expect(layout.ordered(original, identity: { $0 }) == ["app.a", "app.c", "app.d", "app.b"],
+                   "reordering live rows preserves the slot of a closed or hidden app")
+            layout.togglePin("app.b")
+            layout.togglePin("app.d")
+            expect(layout.ordered(original, identity: { $0 }) == ["app.d", "app.b", "app.a", "app.c"],
+                   "pinned apps lead the list while keeping their chosen order")
+            layout.move("app.b", offset: -1, visibleIDs: layout.ordered(original, identity: { $0 }))
+            expect(layout.ordered(original, identity: { $0 }) == ["app.b", "app.d", "app.a", "app.c"],
+                   "pinned apps can be rearranged independently")
+            expect(layout.neighbor(of: "app.d", offset: 1, visibleIDs: ["app.b", "app.d", "app.a", "app.c"]) == nil
+                   && layout.neighbor(of: "app.a", offset: -1, visibleIDs: ["app.b", "app.d", "app.a", "app.c"]) == nil,
+                   "reordering does not cross the pinned boundary")
+            let saved = layout
+            layout.move("missing", offset: -1, visibleIDs: original)
+            expect(layout == saved, "a vanished row cannot overwrite the saved arrangement")
+            layout.togglePin("app.b")
+            expect(!layout.isPinned("app.b") && layout.isPinned("app.d"), "unpinning affects only the chosen app")
+            expect(layout.ordered(original + ["app.e"], identity: { $0 }).last == "app.e",
+                   "new apps follow the remembered order")
+            var dragged = MixerAppArrangement()
+            dragged.move("app.a", to: "app.d", after: true, visibleIDs: original)
+            expect(dragged.ordered(original, identity: { $0 }) == ["app.b", "app.c", "app.d", "app.a"],
+                   "one drag can insert the first app below the last app")
+            dragged.move("app.a", to: "app.b", after: false,
+                         visibleIDs: dragged.ordered(original, identity: { $0 }))
+            expect(dragged.ordered(original, identity: { $0 }) == original,
+                   "one drag can insert an app above the first row")
+            dragged.move("app.d", to: "app.a", after: false, visibleIDs: ["app.a", "app.c", "app.d"])
+            expect(dragged.ordered(original, identity: { $0 }) == ["app.d", "app.b", "app.a", "app.c"],
+                   "a long drag leaves a closed app's remembered slot intact")
+            let beforeInvalidDrop = dragged
+            dragged.move("app.a", to: "missing", after: false, visibleIDs: original)
+            dragged.move("missing", to: "app.a", after: true, visibleIDs: original)
+            dragged.move("app.a", to: "app.a", after: false, visibleIDs: original)
+            expect(dragged == beforeInvalidDrop, "missing or same-row drop targets do not change preferences")
+            dragged.togglePin("app.d")
+            let beforeCrossGroupDrop = dragged
+            dragged.move("app.a", to: "app.d", after: false, visibleIDs: original)
+            expect(dragged == beforeCrossGroupDrop, "dragging does not silently pin or unpin an app")
+            let malformed = MixerAppArrangement(rawValue: "invalid")
+            expect(malformed == MixerAppArrangement(), "invalid saved arrangement falls back safely")
+            let duplicate = MixerAppArrangement(rawValue: #"{"order":["app.b","app.b","","app.a"],"pinned":["app.b","app.b",""]}"#)
+            expect(duplicate.order == ["app.b", "app.a"] && duplicate.pinned == ["app.b"],
+                   "restored arrangement removes duplicate and empty identities")
+            expect(Defaults.registeredDefaults[DefaultsKey.mixerAppArrangement] as? String == ""
+                   && SettingsBackupSupport.exportKeys().contains(DefaultsKey.mixerAppArrangement),
+                   "mixer arrangement is opt-in and included in settings backups")
+            let payload = SettingsBackupSupport.payload(appVersion: "test") { key in
+                key == DefaultsKey.mixerAppArrangement ? saved.rawValue : nil
+            }
+            let data = try? PropertyListSerialization.data(fromPropertyList: payload, format: .xml, options: 0)
+            let plist = data.flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) } as? [String: Any]
+            let restored = plist.flatMap { SettingsBackupSupport.sanitizedSettings(from: $0) }
+            let restoredLayout = MixerAppArrangement(rawValue: restored?[DefaultsKey.mixerAppArrangement] as? String ?? "")
+            expect(restoredLayout == saved && restoredLayout.ordered(original, identity: { $0 }) == ["app.b", "app.d", "app.a", "app.c"],
+                   "export and import preserve both pins and positions, including absent apps")
+            expect(!SettingsBackupSupport.valueLooksRight(DefaultsKey.mixerAppArrangement, ["invalid"]),
+                   "backup rejects an arrangement with the wrong storage type")
+        }
+
         expect(MixerRoutingSupport.displayOrderedBefore(name: "Music", id: "com.apple.Music",
                                                         otherName: "Safari", otherID: "com.apple.Safari"),
                "mixer rows order by display name")
@@ -10467,6 +10559,20 @@ struct MetricsTests {
         expect(!UpdateServiceSupport.isNewer("3.3.4-beta.1", than: "3.3.4"),
                "beta is not newer than the released final version")
 
+        expect(UpdateServiceSupport.isNewer("3.4.0-beta.2.1", than: "3.4.0-beta.2")
+               && !UpdateServiceSupport.isNewer("3.4.0-beta.2", than: "3.4.0-beta.2.1")
+               && UpdateServiceSupport.isNewer("3.4.0-beta.3", than: "3.4.0-beta.2.1")
+               && UpdateServiceSupport.isNewer("3.4.0", than: "3.4.0-beta.2.1"),
+               "beta hotfixes follow their parent beta and precede the next beta and stable version")
+        let betaHotfix = UpdateServiceSupport.ReleaseCandidate(
+            tagName: "v3.4.0-beta.2.1", isPrerelease: true, isDraft: false,
+            dmgURL: URL(string: "https://example.com/update.dmg"), dmgExpectedBytes: 1000, body: "Hotfix")
+        expect(UpdateServiceSupport.selectUpdate(from: [betaHotfix], currentVersion: "3.4.0-beta.2",
+                                                 includeBetas: true)?.tagName == betaHotfix.tagName
+               && UpdateServiceSupport.selectUpdate(from: [betaHotfix], currentVersion: "3.3.5",
+                                                     includeBetas: false) == nil,
+               "the beta channel offers the hotfix while the stable channel ignores it")
+
         // Release candidate selection
         let dummyDMG = URL(string: "https://github.com/vorssaint/vorssaint-utils/releases/download/v3.3.4/Vorssaint.dmg")!
         let dummyBetaDMG = URL(string: "https://github.com/vorssaint/vorssaint-utils/releases/download/v3.3.4-beta.1/Vorssaint.dmg")!
@@ -12245,16 +12351,42 @@ struct MetricsTests {
         expect(groupedIconLayout.appRowContentWidth
                >= CGFloat(appGroups.count) * SwitcherIconRowLayout.appTileWidth,
                "App Switcher icon-row layout uses full app tile width")
-        // The viewport used to be sized to hold every card of the selected app,
-        // which is what made the panel widen and re-centre on each step (#783).
-        // It now stops at the icon row and scrolls past it, while still holding
-        // one whole card whatever the row is doing.
-        expect(groupedIconLayout.previewContentWidth >= SwitcherIconRowLayout.previewCardWidth
-               && groupedIconLayout.previewSurfaceWidth
-                    <= max(groupedIconLayout.appRowSurfaceWidth,
-                           SwitcherIconRowLayout.previewCardWidth
-                               + SwitcherIconRowLayout.previewPanelPadding * 2),
-               "App Switcher icon-row preview stays inside the icon row instead of widening the panel")
+        expect(groupedIconLayout.previewFitsWithoutScrolling(cardCount: 2),
+               "App Switcher shows a pair of windows even with a short icon row")
+        do {
+            let savedPreviewSize = UserDefaults.standard.object(forKey: DefaultsKey.previewSize)
+            defer {
+                if let savedPreviewSize {
+                    UserDefaults.standard.set(savedPreviewSize, forKey: DefaultsKey.previewSize)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: DefaultsKey.previewSize)
+                }
+            }
+            for size in Defaults.allowedPreviewSizes {
+                UserDefaults.standard.set(size, forKey: DefaultsKey.previewSize)
+                for width in [640.0, 800.0, 1440.0] {
+                    for hints in [false, true] {
+                        let frame = CGRect(x: 0, y: 0, width: width, height: 900)
+                        let pair = SwitcherIconRowLayout.compute(appCount: 2, selectedWindowCount: 2,
+                            maximumWindowCount: 8, screenVisibleFrame: frame, showsShortcutHints: hints)
+                        let single = SwitcherIconRowLayout.compute(appCount: 2, selectedWindowCount: 1,
+                            maximumWindowCount: 8, screenVisibleFrame: frame, showsShortcutHints: hints)
+                        let many = SwitcherIconRowLayout.compute(appCount: 2, selectedWindowCount: 8,
+                            maximumWindowCount: 8, screenVisibleFrame: frame, showsShortcutHints: hints)
+                        expect(pair.previewFitsWithoutScrolling(cardCount: 2),
+                               "App Switcher keeps two windows visible at every preview size")
+                        expect(pair.panelSize.width == single.panelSize.width
+                               && pair.panelSize.width == many.panelSize.width,
+                               "App Switcher keeps short icon rows stationary when changing apps")
+                        expect(pair.panelSize.width <= width * 0.96
+                               && !many.previewFitsWithoutScrolling(cardCount: 8),
+                               "App Switcher bounds multi-window previews to the display and keeps overflow scrollable")
+                        expect(single.previewContentWidth == SwitcherIconRowLayout.previewCardWidth,
+                               "App Switcher keeps single-window surfaces compact within the stable panel")
+                    }
+                }
+            }
+        }
         // A capped viewport can hold fewer cards than it looks like, because the
         // row puts spacing between them. Counting by card width alone reports a
         // fit while the last card is still clipped, and the scroll view then
@@ -12496,6 +12628,17 @@ struct MetricsTests {
                "App Switcher activates only the selected window when a window target exists")
         expect(SwitcherSupport.shouldActivateAllWindows(targetsSpecificWindow: false),
                "App Switcher can activate the full app for app-only entries")
+        // App-level activation can raise sibling windows, so a window-scoped
+        // plan first asks the window server for the exact window (issue #1503).
+        let windowScopedPlan = SwitcherSupport.activationPlan(targetsSpecificWindow: true)
+        let appScopedPlan = SwitcherSupport.activationPlan(targetsSpecificWindow: false)
+        expect(SwitcherSupport.appActivationRoute(plan: windowScopedPlan, windowID: 77)
+               == .exactWindow(77),
+               "a selected window is fronted by the window server, not by activating its app")
+        expect(SwitcherSupport.appActivationRoute(plan: appScopedPlan, windowID: 77) == .wholeApp,
+               "an app entry still activates the whole app the way Command-Tab does")
+        expect(SwitcherSupport.appActivationRoute(plan: windowScopedPlan, windowID: nil) == .wholeApp,
+               "a window-scoped plan without a window id has only the app to activate")
         expect(SwitcherSupport.shouldRestoreSourceAfterTargetMinimize(targetPID: 10,
                                                                       sourcePID: 20,
                                                                       frontmostPID: 10,
@@ -15213,6 +15356,12 @@ struct MetricsTests {
                "every feature belongs to exactly one group")
         expect(!FeatureGroup.allCases.contains { AppFeature.features(in: $0).isEmpty },
                "no hub group is empty")
+        expect(AppFeature.features(in: .dynamicIsland) == [
+            .notch, .notchCalendar, .notchNotifications, .notchGestures, .notchTimer,
+            .notchAccessories, .notchLyrics, .notchQueue, .notchDownloads,
+        ], "the Dynamic Island heads its own hub section, followed by its extensions")
+        expect(AppFeature.dynamicIslandExtensions == Array(AppFeature.features(in: .dynamicIsland).dropFirst()),
+               "the Dynamic Island's extensions are every other feature of its section")
         expect(AppPermission.allCases.map(\.rawValue) == [
             "accessibility", "screenRecording", "fullDiskAccess", "filesAndFolders", "notifications",
             "automationFinder", "automationTerminal", "automationPlayback", "audioCapture", "microphone", "camera",
@@ -16804,6 +16953,74 @@ struct MetricsTests {
                "brightness overlay percentage rounds and clamps safely")
 
         // MARK: Text snippets engine (issue #201)
+
+        // Driven by synthetic listings rather than this machine's
+        // /System/Library/Sounds, so the assertions mean the same thing on
+        // every macOS the CI runners use.
+        expect(TextSnippetSupport.alertSoundNames(from: ["Tink.aiff", "Basso.aiff"]) == ["Basso", "Tink"],
+               "directory entries become sorted sound names without their extension")
+        expect(TextSnippetSupport.alertSoundNames(from: ["Glass.AIFF"]) == ["Glass"],
+               "an uppercase extension is still recognized")
+        expect(TextSnippetSupport.alertSoundNames(from: ["Readme.txt", "Sub.caf"]).isEmpty == false,
+               "a listing with no aiff falls back rather than emptying the picker")
+        expect(TextSnippetSupport.alertSoundNames(from: ["Readme.txt"])
+                == TextSnippetSupport.fallbackAlertSoundNames,
+               "an unreadable or foreign sounds directory falls back to the known names")
+        expect(TextSnippetSupport.alertSoundNames(from: []) == TextSnippetSupport.fallbackAlertSoundNames,
+               "an empty directory falls back to the known names")
+
+        expect(TextSnippetSupport.resolvedSoundName(stored: "Tink", available: ["Basso", "Tink"]) == "Tink",
+               "a stored sound the system still offers is kept")
+        expect(TextSnippetSupport.resolvedSoundName(stored: "Gone", available: ["Basso", "Tink"]) == "Tink",
+               "a stored sound this Mac no longer has falls back to the default instead of going silent")
+        expect(TextSnippetSupport.resolvedSoundName(stored: nil, available: ["Basso", "Tink"]) == "Tink",
+               "no stored sound uses the default")
+        expect(TextSnippetSupport.resolvedSoundName(stored: "Gone", available: ["Basso"]) == "Basso",
+               "with neither the stored sound nor the default present, the first offered one is used")
+        expect(TextSnippetSupport.resolvedSoundName(stored: "Gone", available: []) == nil,
+               "nothing to play resolves to nothing rather than a name that cannot load")
+
+
+        expect(Defaults.registeredDefaults[DefaultsKey.snippetSoundEnabled] as? Bool == false,
+               "sound on expansion stays off until asked for")
+        expect(Defaults.registeredDefaults[DefaultsKey.snippetSoundName] as? String
+                == Defaults.defaultSnippetSoundName,
+               "the registered default is the shared constant, not a second copy of the name")
+        expect(TextSnippetSupport.fallbackAlertSoundNames.contains(Defaults.defaultSnippetSoundName),
+               "the default sound is one the fallback list offers")
+        expect(FileManager.default.fileExists(
+                atPath: TextSnippetSupport.soundFileURL(for: Defaults.defaultSnippetSoundName).path),
+               "the default sound is played from the file macOS ships for it")
+        expect(Set(TextSnippetSupport.fallbackAlertSoundNames).count
+                == TextSnippetSupport.fallbackAlertSoundNames.count,
+               "no duplicate names in the fallback list")
+
+        expect(AlertSoundStrings.displayName(for: "Tink", language: .enUS) == "Boop",
+               "macOS has shown Tink as Boop in Sound settings since Big Sur")
+        expect(AlertSoundStrings.displayName(for: "Ping", language: .enUS) == "Sonar",
+               "macOS has shown Ping as Sonar in Sound settings since Big Sur")
+        expect(AlertSoundStrings.displayName(for: "Tink", language: .fr) == "Boop",
+               "a supported language other than English gets its own translated name")
+        expect(AlertSoundStrings.displayName(for: "Ping", language: .ru) == "Сонар",
+               "a supported language other than English gets its own translated name")
+        expect(AlertSoundStrings.displayName(for: "Tink", language: .ja) == "Boop",
+               "Apple's own table keeps the English display name for Japanese, Korean and Chinese")
+        expect(AlertSoundStrings.displayName(for: "Custom", language: .enUS) == "Custom",
+               "a name outside the table is shown unchanged rather than dropped")
+        expect(TextSnippetSupport.fallbackAlertSoundNames.allSatisfy {
+                AlertSoundStrings.displayName(for: $0, language: .enUS) != $0
+            },
+               "every shipped alert sound has a display name distinct from its file name")
+
+        expect(AlertSoundStrings.sortedNames(TextSnippetSupport.fallbackAlertSoundNames, language: .enUS)
+                == ["Tink", "Blow", "Pop", "Glass", "Funk", "Hero", "Frog",
+                    "Basso", "Bottle", "Purr", "Morse", "Ping", "Sosumi", "Submarine"],
+               "the picker orders by what each name shows (Boop, Breeze, Bubble, ...), not by the file name")
+        expect(AlertSoundStrings.sortedNames(["Basso", "Tink"], language: .enUS).first == "Tink",
+               "Boop sorts before Mezzo even though the file name Basso sorts before Tink")
+        expect(Set(AlertSoundStrings.sortedNames(TextSnippetSupport.fallbackAlertSoundNames, language: .enUS))
+                == Set(TextSnippetSupport.fallbackAlertSoundNames),
+               "sorting only reorders the list, it never drops or adds a name")
 
         expect(TextSnippetSupport.sanitizedTrigger("  ;e mail\n") == ";email", "triggers lose whitespace")
         expect(TextSnippetSupport.bufferAppending(String(repeating: "a", count: 64), typed: "b").count
@@ -18490,6 +18707,19 @@ struct MetricsTests {
                 && featureRuntimeSource.components(separatedBy:
                     "RecentCaptureService.shared.syncWithPreferences()").count == 3,
                "the history shortcut opens its window and follows both capture producers")
+        // A palette summoned from another app must appear at once, then leave
+        // when the user activates a different app instead of waiting for ours.
+        let recentCapturePaletteCode = recentCaptureServiceSource
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        expect(recentCapturePaletteCode.contains("panel.hidesOnDeactivate = false")
+                && !recentCapturePaletteCode.contains("hidesOnDeactivate = true")
+                && recentCapturePaletteCode.contains("NSWorkspace.didActivateApplicationNotification")
+                && !recentCapturePaletteCode.contains("NSApplication.didResignActiveNotification")
+                && recentCapturePaletteCode.contains(
+                    "NSWorkspace.shared.notificationCenter.removeObserver("),
+               "a recent captures palette appears promptly and leaves when another app activates")
         expect(!ScreenshotSupport.captureAvailabilityChanged(
                     activeTools: [.screenshot, .recording],
                     availableTools: [.screenshot, .recording])
@@ -18602,6 +18832,15 @@ struct MetricsTests {
                                                             selectionInProgress: false,
                                                             capturePending: false),
                "the capture chooser disappears for the whole drag and while capture is pending")
+        expect(ScreenshotSupport.offersRepeatLastRegion(isPickingColor: false,
+                                                        storedRegionDisplayIsAvailable: true),
+               "the repeat hint is offered once a region is stored on a display still in the session")
+        expect(!ScreenshotSupport.offersRepeatLastRegion(isPickingColor: false,
+                                                         storedRegionDisplayIsAvailable: false),
+               "no repeat hint before the first capture, or when its display is gone")
+        expect(!ScreenshotSupport.offersRepeatLastRegion(isPickingColor: true,
+                                                         storedRegionDisplayIsAvailable: true),
+               "the colour picker has no region to repeat, matching repeatLastRegion's own guard")
         let captureSelectionSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/QuickTools/ScreenshotSelectionController.swift",
             encoding: .utf8)) ?? ""
@@ -23170,8 +23409,8 @@ struct MetricsTests {
         // MARK: Command bar, what the person controls
 
         expect(CommandBarSource.allCases.map(\.rawValue) == [
-            "actions", "apps", "menus", "windows", "quitApps", "settingsPages", "macSettings",
-            "snippets", "clipboard", "emoji", "folders", "answers", "calculator",
+            "actions", "apps", "menus", "windows", "quitApps", "uninstallApps", "settingsPages",
+            "macSettings", "snippets", "clipboard", "emoji", "folders", "answers", "calculator",
             "selection", "links", "files", "killProcess",
         ], "source ids are stable (they persist inside the disabled list)")
         expect(CommandBarSource.actions.isAlwaysOn
@@ -23407,6 +23646,8 @@ struct MetricsTests {
                 && CommandBarPreferences.rankBias(for: .apps)
                     > CommandBarPreferences.rankBias(for: .actions),
                "apps lead commands, while a file needs a plainly better match")
+        expect(CommandBarPreferences.rankBias(for: .uninstallApps) == 0,
+               "uninstall browse entries have no source ranking boost")
 
         // MARK: The Mac's own Settings panes
         let openablePane: [String: Any] = [
@@ -23508,8 +23749,13 @@ struct MetricsTests {
         expect(CommandBarPreferences.acceptsAlias(rowID: "app.x")
                 && !CommandBarPreferences.acceptsAlias(rowID: "menu.1.Bold")
                 && !CommandBarPreferences.acceptsAlias(rowID: "window.4")
-                && !CommandBarPreferences.acceptsAlias(rowID: "clipboard.abc"),
+                && !CommandBarPreferences.acceptsAlias(rowID: "clipboard.abc")
+                && !CommandBarPreferences.acceptsAlias(rowID: "uninstall.x"),
                "only rows that are the same thing tomorrow can be named")
+        expect(!CommandBarPreferences.acceptsPin(rowID: "uninstall.x")
+                && !CommandBarPreferences.acceptsPin(rowID: "menu.1.Bold")
+                && CommandBarPreferences.acceptsPin(rowID: "app.x"),
+               "an uninstall row is offered fresh each time, so it cannot be pinned")
 
         var barPins = CommandBarPreferences.togglingPin("action.screenshot", in: [])
         barPins = CommandBarPreferences.togglingPin("app.chat", in: barPins)
@@ -23703,6 +23949,60 @@ struct MetricsTests {
                "popular emoji keep a predictable lead over the Unicode long tail")
         expect(emojiCharacters.count == CommandBarEmoji.emoji.count,
                "no emoji is offered twice")
+
+        // MARK: Skin tones
+
+        expect(CommandBarEmoji.SkinTone.allCases.count == 6
+                && CommandBarEmoji.SkinTone.none.modifier == nil
+                && CommandBarEmoji.SkinTone.allCases.dropFirst().allSatisfy {
+                    $0.modifier?.properties.isEmojiModifier == true
+                },
+               "the yellow default and the five tones Unicode defines, and nothing else")
+        expect(CommandBarEmoji.acceptsSkinTone("👍") && CommandBarEmoji.acceptsSkinTone("☝️"),
+               "a hand takes a tone whether or not it carries a presentation selector")
+        expect(!CommandBarEmoji.acceptsSkinTone("😀") && !CommandBarEmoji.acceptsSkinTone("🍕")
+                && !CommandBarEmoji.acceptsSkinTone("🤷\u{200D}♀️"),
+               "a face, an object and a sequence are all left alone")
+        expect(CommandBarEmoji.applying(.medium, to: "👍") == "👍\u{1F3FD}",
+               "a tone is the modifier appended to the emoji")
+        expect(CommandBarEmoji.applying(.medium, to: "☝️")
+                == "\u{261D}\u{1F3FD}",
+               "the presentation selector goes with the tone, which already implies it")
+        expect(CommandBarEmoji.SkinTone.allCases.allSatisfy {
+            CommandBarEmoji.applying($0, to: "☝️").count == 1
+        }, "every tone of an emoji is still one character to type and to delete")
+        expect(CommandBarEmoji.applying(.none, to: "👍") == "👍"
+                && CommandBarEmoji.applying(.dark, to: "🍕") == "🍕",
+               "the default and an emoji with no tone to give are returned untouched")
+        expect(Set(CommandBarEmoji.SkinTone.allCases.map(\.swatch)).count
+                == CommandBarEmoji.SkinTone.allCases.count,
+               "the picker shows a different hand for every tone it offers")
+        expect(CommandBarEmoji.emoji.contains { CommandBarEmoji.acceptsSkinTone($0.character) }
+                && CommandBarEmoji.emoji.contains { !CommandBarEmoji.acceptsSkinTone($0.character) },
+               "the offered set has emoji that take a tone and emoji that do not")
+        expect(CommandBarPreferences.skinTone(from: "") == CommandBarEmoji.SkinTone.none
+                && CommandBarPreferences.skinTone(from: "dark") == CommandBarEmoji.SkinTone.dark
+                && CommandBarPreferences.skinTone(from: "mauve") == CommandBarEmoji.SkinTone.none,
+               "a tone survives storage, and one this version does not know reads as the default")
+        expect(Defaults.registeredDefaults[DefaultsKey.commandBarEmojiSkinTone] as? String == "",
+               "emoji ship in the tone Unicode gives them until the person says otherwise")
+        expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.commandBarEmojiSkinTone),
+               "the chosen tone is configuration, so it travels with an exported setup")
+        expect(CommandBarPreferences.emojiIdentity(
+            fromRowID: CommandBarPreferences.emojiRowID(identity: "👍")) == "👍",
+               "the emoji comes back out of the id its row is stored under")
+        expect(CommandBarEmoji.SkinTone.allCases.filter { $0 != .none }.allSatisfy {
+            CommandBarEmoji.applying($0, to: "👍") != "👍"
+        }, "every tone changes the character, so an id carrying one would move with it")
+        expect(CommandBarPreferences.emojiIdentity(fromRowID: "app.finder") == nil
+                && CommandBarPreferences.emojiIdentity(fromRowID: "emoji.") == nil,
+               "a row of another kind, and an id with no emoji left in it, answer with nothing")
+        let catalogSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/CommandBar/CommandBarCatalog.swift",
+            encoding: .utf8)) ?? ""
+        expect(catalogSource.contains("CommandBarPreferences.emojiRowID(identity: emoji.identity)"),
+               "the emoji rows take their id from the seam above, not from the toned character")
+
         expect(CommandBarSearch.emojiQuery(from: "fire") == nil,
                "an ordinary search never opens the emoji index")
         expect(CommandBarSearch.emojiQuery(from: ":fire") == "fire"
@@ -25167,6 +25467,13 @@ struct MetricsTests {
                 && !InstalledApps.isSystemApplication(
                     at: URL(fileURLWithPath: "/Applications/UserUtility.app")),
                "app controls never offer system apps to the uninstaller")
+        expect(InstalledApps.isInApplicationsFolder(
+                    URL(fileURLWithPath: "/Applications/UserUtility.app"))
+                && InstalledApps.isInApplicationsFolder(
+                    URL(fileURLWithPath: "/Applications/Vendor/Nested.app"))
+                && !InstalledApps.isInApplicationsFolder(
+                    URL(fileURLWithPath: "/Users/someone/Downloads/Rogue.app")),
+               "an app nested in an Applications subfolder counts as installed, same as installedApplications' own recursive walk")
 
         // MARK: Command bar search and ranking
 

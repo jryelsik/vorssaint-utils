@@ -107,6 +107,10 @@ enum NotchLayout {
     static let sectionSearchHeight: CGFloat = 36
     static let sectionResultHeight: CGFloat = 52
     static var chromeHeight: CGFloat { headerHeight + spacing + bottomInset }
+    /// Breathing room every compact strip keeps from its silhouette.
+    static let compactEdgeGap: CGFloat = 5
+    /// Bottom corner `NotchShape` draws for a surface of this height.
+    static func surfaceRadius(height: CGFloat) -> CGFloat { min(28, height / 2) }
 }
 
 enum NotchIdleContent: String, CaseIterable {
@@ -721,7 +725,7 @@ struct NotchGeometry: Equatable {
     var compactMusicLabelInset: CGFloat {
         let height = compactActivityContentHeight
         let shoulder = min(NotchLayout.shoulder, height * 0.28)
-        let bottom = min(28, height / 2)
+        let bottom = NotchLayout.surfaceRadius(height: height)
         // Wings normally provide this room. When menus hide them, the center
         // text must also clear the silhouette's shoulders and bottom corners.
         return max(4, shoulder + bottom + 4 - compactActivityWingWidth)
@@ -762,6 +766,30 @@ struct NotchGeometry: Equatable {
     var compactActivityWingWidth: CGFloat {
         max(0, (compactActivitySize.width - compactActivityCameraGap - compactActivityHorizontalPadding * 2) / 2)
     }
+    /// Where the silhouette's straight edge sits, once its shoulder has flared.
+    var compactActivityShoulder: CGFloat {
+        min(NotchLayout.shoulder, compactActivitySize.height * 0.28)
+    }
+    /// Inset that keeps a vertically centred box of `boxHeight`, itself rounded
+    /// by `radius`, an even `gap` away from the strip's silhouette.
+    /// A strip is barely taller than its corners, so its lower half is one long
+    /// arc: padding measured against the straight edge still leaves artwork and
+    /// meters grazing the curve. Push the box in until its own corner keeps the
+    /// same distance from the arc that its top keeps from the shoulder.
+    func compactActivityEdgeInset(boxHeight: CGFloat, radius: CGFloat,
+                                  gap: CGFloat = NotchLayout.compactEdgeGap) -> CGFloat {
+        let shoulder = compactActivityShoulder
+        let corner = min(NotchLayout.surfaceRadius(height: compactActivitySize.height),
+                         (compactActivitySize.width - shoulder * 2) / 2)
+        let flat = shoulder + gap - compactActivityHorizontalPadding
+        let below = (compactActivityContentHeight - boxHeight) / 2
+        // Both corner centres, grown by the gap, decide the horizontal offset.
+        let reach = corner - radius - gap
+        let drop = corner - radius - below
+        guard reach > 0, drop > 0 else { return max(0, flat) }
+        let span = reach > drop ? (reach * reach - drop * drop).squareRoot() : 0
+        return max(0, flat, shoulder + corner - radius - span - compactActivityHorizontalPadding)
+    }
     var notice: CGSize {
         noticeSize(wingWidth: 112)
     }
@@ -796,7 +824,7 @@ struct NotchGeometry: Equatable {
                       sliderCount: Int = 2, controlsHaveMusic: Bool = false, musicHasContent: Bool = true, musicExtraHeight: CGFloat = 0,
                       fileMediaHeight: CGFloat? = nil, systemRows: Int = 3,
                       capturePreviewHeight: CGFloat? = nil,
-                      timerHasSession: Bool = false, timerShowsPomodoro: Bool = false) -> CGSize {
+                      timerHasSession: Bool = false, timerMode: NotchTimerMode = .timer) -> CGSize {
         let contentHeight: CGFloat
         switch module {
         case .controls:
@@ -818,8 +846,14 @@ struct NotchGeometry: Equatable {
         case .files: contentHeight = fileMediaHeight.map { NotchLayout.chromeHeight + $0 } ?? 336
         case .clipboard: contentHeight = 340
         case .captures: contentHeight = capturePreviewHeight.map { NotchLayout.chromeHeight + $0 + 4 } ?? 340
-        case .timer: contentHeight = NotchLayout.chromeHeight
-                + (timerHasSession ? (timerShowsPomodoro ? 118 : 96) : (timerShowsPomodoro ? 370 : 202))
+        case .timer:
+            let timer: CGFloat
+            switch timerMode {
+            case .timer: timer = timerHasSession ? 96 : 208
+            case .pomodoro: timer = timerHasSession ? 118 : 376
+            case .stopwatch: timer = timerHasSession ? 96 : 114
+            }
+            contentHeight = NotchLayout.chromeHeight + timer
         case .camera: contentHeight = NotchLayout.chromeHeight + (expandedWidth - NotchLayout.horizontalInset * 2) * 0.75 + 50
         case .tools, .calendar, .notifications, .downloads: contentHeight = 400
         }

@@ -28,7 +28,7 @@ struct NotchMusicView: View {
                         .scrollIndicators(.automatic)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            } else {
+            } else if !service.awaitingPlayback {
                 HStack(spacing: 20) {
                     Image(systemName: "music.note")
                         .font(.system(size: 30, weight: .light))
@@ -143,7 +143,9 @@ struct NotchMusicView: View {
 
 private struct NotchMusicTransport: View {
     let playback: NotchPlayback
-    private let service = NotchMusicService.shared
+    // Automation discovery and consent finish after the first render while the
+    // track stays the same, so this row must observe the service itself.
+    @ObservedObject private var service = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var text: RadialMenuFeatureStrings { FeatureStrings.radialMenu(l10n.language) }
@@ -209,7 +211,7 @@ private struct NotchMusicTransport: View {
 
 private struct NotchMusicTimeline: View {
     let playback: NotchPlayback
-    let service: NotchMusicService
+    @ObservedObject var service: NotchMusicService
     var tint: Color = .white
     @ObservedObject private var l10n = L10n.shared
     @State private var scrubPosition: Double?
@@ -309,11 +311,11 @@ struct NotchMusicControlsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Button { notch.select(.music) } label: {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(music.playback?.track.title ?? text.mediaNothingPlaying)
+                        Text(music.playback?.track.title ?? (music.awaitingPlayback ? text.mediaNowPlaying : text.mediaNothingPlaying))
                             .font(.system(size: 13, weight: .semibold)).lineLimit(1)
                         Text(music.commandFailed ? FeatureStrings.notchMusicExtras(l10n.language).playbackFailed
                              : music.playback?.track.artist ?? music.playback?.track.album
-                                ?? FeatureStrings.notch(l10n.language).musicHint)
+                                ?? (music.awaitingPlayback ? "" : FeatureStrings.notch(l10n.language).musicHint))
                             .font(.system(size: 11))
                             .foregroundStyle(music.commandFailed ? .orange : .secondary)
                             .lineLimit(1)

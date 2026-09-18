@@ -17,6 +17,15 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 
 MUTATIONS = [
+    ("emoji family offers unsupported tones", "emoji", "Sources/Vorssaint/Services/CommandBar/CommandBarEmoji.swift",
+     "scalar.value != 0x1F46A && scalar.properties.isEmojiModifierBase", "scalar.properties.isEmojiModifierBase",
+     "family stays unchanged instead of offering unsupported skin tones"),
+    ("one-off emoji skips usage learning", "emoji", "Sources/Vorssaint/Services/CommandBar/CommandBarService.swift",
+     "                self.recordUsage(of: entry)\n", "",
+     "a one-off tone records exactly one use under the original emoji"),
+    ("one-off emoji learns the action field instead of its search", "emoji", "Sources/Vorssaint/Services/CommandBar/CommandBarService.swift",
+     "        case .argument, .actions:\n", "        case .argument:\n",
+     "a one-off tone learns the search saved before opening actions"),
     ("output switches reuse another device's volume baseline", "core", "Sources/Vorssaint/Services/Notch/NotchService.swift",
      "                self.volumeBaseline = nil\n                self.muteBaseline = nil\n", "",
      "switching output never replaces its connection notice with stored volume or mute"),

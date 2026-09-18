@@ -170,9 +170,8 @@ final class NotchService: ObservableObject {
                                         + geometry.systemColumns - 1) / geometry.systemColumns,
                                      capturePreviewHeight: captureContent == nil ? nil : captureContentHeight,
                                      timerHasSession: NotchTimerService.shared.session.hasSession,
-                                     timerShowsPomodoro: NotchTimerService.shared.session.hasSession
-                                        ? NotchTimerService.shared.session.mode == .pomodoro
-                                        : UserDefaults.standard.string(forKey: DefaultsKey.notchTimerMode) == NotchTimerMode.pomodoro.rawValue)
+                                     timerMode: NotchTimerService.shared.session.hasSession
+                                        ? NotchTimerService.shared.session.mode : NotchTimerSupport.savedMode())
     }
     var contentSize: CGSize { geometry.contentSize(for: expandedSize) }
     var surfaceSize: CGSize {
@@ -962,7 +961,8 @@ final class NotchService: ObservableObject {
     func refreshPresentation(animated: Bool = true, transitionContent: NotchContentTransition = .none) {
         syncHiddenHoverMonitoring()
         if hiddenUntilHover || (captureControls != nil && captureSelectionInProgress) {
-            panel?.orderOut(nil)
+            if hiddenUntilHover { windowHost?.hide(animated: animated) }
+            else { panel?.orderOut(nil) }
             removeScreenEdgeClickMonitors()
             return
         }
@@ -979,7 +979,10 @@ final class NotchService: ObservableObject {
         if let windowHost, windowHost.targetSize != size { objectWillChange.send() }
         windowHost?.present(size: size, geometry: geometry, animated: animated,
                             transitionContent: transitionContent,
-                            quickAccess: expanded && captureControls == nil && !access.buttons.isEmpty ? access : nil)
+                            quickAccess: expanded && captureControls == nil && !access.buttons.isEmpty ? access : nil,
+                            revealFromHidden: captureControls == nil
+                                && UserDefaults.standard.bool(forKey: DefaultsKey.notchHideUntilHover)
+                                && UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover))
         let activationRect: CGRect
         if captureControls != nil {
             activationRect = captureControlsCollapsed ? CGRect(origin: .zero, size: size) : .zero
@@ -1117,14 +1120,11 @@ final class NotchService: ObservableObject {
         readMenuSpace()
     }
 
-    private func invalidateMenuSpace(clearMeasurement: Bool = false) {
+    private func invalidateMenuSpace() {
         menuSpaceGeneration += 1
-        // Another app can have menus across the simulated camera. Screen
-        // notifications alone can retain the measure to avoid brightness flicker.
-        if clearMeasurement, !geometry.isNotched, geometry.compactSideRoom != nil {
-            geometry.compactSideRoom = nil
-            refreshPresentation(animated: false)
-        }
+        // Keep the last measured layout until its replacement arrives, so a
+        // switch does not blink; the read that follows withdraws the cutout
+        // once the new menu bar reaches the camera.
         readMenuSpace()
     }
 
@@ -1143,8 +1143,11 @@ final class NotchService: ObservableObject {
     }
 
     private func readMenuSpace() {
+        // The displayed menus belong to the menu bar's owner, which is not the
+        // frontmost application while an accessory app such as a launcher has
+        // focus; that app's own menu geometry was never laid out.
         guard menuSpaceTimer != nil, !menuSpaceReading,
-              let app = NSWorkspace.shared.frontmostApplication else { return }
+              let app = NSWorkspace.shared.menuBarOwningApplication else { return }
         menuSpaceReading = true
         let generation = menuSpaceGeneration
         let geometry = geometry
@@ -1159,7 +1162,7 @@ final class NotchService: ObservableObject {
                 self.menuSpaceReading = false
                 guard self.menuSpaceTimer != nil else { return }
                 guard self.menuSpaceGeneration == generation,
-                      NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                      NSWorkspace.shared.menuBarOwningApplication?.processIdentifier == pid else {
                     self.readMenuSpace(); return
                 }
                 self.applyMenuSpace(room)
@@ -1247,17 +1250,7 @@ final class NotchService: ObservableObject {
         session.onConsole = SessionActivity.shared.isActive
         session.locked = (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
         let workspace = NSWorkspace.shared.notificationCenter
-        observe(workspace, NSWorkspace.didActivateApplicationNotification) { [weak self] in
-            guard let self, !self.suspended else { return }
-            self.invalidateMenuSpace(clearMeasurement: true)
-            let identifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            guard identifier != Bundle.main.bundleIdentifier, identifier != AssistiveKeyboard.bundleID else { return }
-            self.panel?.resignKey()
-            if self.expanded, self.modules.contains(.clipboard) {
-                ClipboardHistoryService.shared.rememberPasteTarget()
-            }
-            if self.expanded, !self.pinned, !self.keepsWorkingSurface, self.captureControls == nil { self.collapse() }
-        }
+        observe(workspace, NSWorkspace.didActivateApplicationNotification) { [weak self] in self?.applicationDidActivate() }
         observe(workspace, NSWorkspace.willSleepNotification) { [weak self] in
             self?.updateSession { $0.sleeping = true }
         }
@@ -1283,6 +1276,16 @@ final class NotchService: ObservableObject {
         observe(distributed, Notification.Name("com.apple.screenIsUnlocked")) { [weak self] in
             self?.updateSession { $0.locked = false }
         }
+    }
+
+    private func applicationDidActivate() {
+        guard !suspended else { return }
+        invalidateMenuSpace()
+        let identifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        guard identifier != Bundle.main.bundleIdentifier, identifier != AssistiveKeyboard.bundleID else { return }
+        panel?.resignKey()
+        if expanded, modules.contains(.clipboard) { ClipboardHistoryService.shared.rememberPasteTarget() }
+        if expanded, !pinned, !keepsWorkingSurface, captureControls == nil { collapse() }
     }
 
     private func observe(_ center: NotificationCenter, _ name: Notification.Name,
@@ -1416,6 +1419,12 @@ final class NotchService: ObservableObject {
     private func removeEventMonitors() {
         eventMonitors.forEach(NSEvent.removeMonitor)
         eventMonitors.removeAll()
+    }
+
+    func showUpdate() {
+        guard running, !suspended, expanded, case .available = UpdateService.shared.state else { return }
+        collapse()
+        appDelegate()?.showUpdatePreview()
     }
 
     private func bindEvents() {

@@ -1982,11 +1982,16 @@ struct UtilityActionButton: View {
                 VStack(alignment: .leading, spacing: 7) {
                     if permissionAction != nil {
                         rowContent(showChevron: false)
-                        permissionButton
                     } else {
                         mainButton
                     }
-                    accessoryButton
+                    VStack(alignment: .leading, spacing: 7) {
+                        if permissionAction != nil {
+                            permissionButton
+                        }
+                        accessoryButton
+                    }
+                    .padding(.leading, 31)
                 }
                 .panelCard()
             } else {
@@ -2016,7 +2021,6 @@ struct UtilityActionButton: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.mini)
-            .padding(.leading, 31)
         }
     }
 
