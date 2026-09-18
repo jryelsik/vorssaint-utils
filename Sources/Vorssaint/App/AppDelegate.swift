@@ -96,6 +96,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             self?.captureStatusClick()
             self?.showMetricPanel(for: metric, anchoredTo: button)
         }
+        statusController.onClipboardPreviewClick = {
+            // No captureStatusClick() here, unlike the other click handlers:
+            // it only ever helps anchor the main popover to a status item,
+            // and this action opens the clipboard quick panel instead, which
+            // centers itself on the pointer's screen rather than anchoring to
+            // any status item.
+            ClipboardHistoryService.shared.toggleHistoryWindow()
+        }
         // The shelf drop zone chip anchors itself under the menu bar icon.
         ShelfService.shared.statusItemFrameProvider = { [weak self] in
             guard let item = self?.statusController.statusItem, item.isVisible,
@@ -108,6 +116,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         setUpPopover()
         bindManagers()
 
+        // A marker from an earlier build may name a hotkey id this build no
+        // longer owns; give it back before any feature decides what to hold,
+        // except the ids the switcher is about to take over again, which stay
+        // off rather than flipping on and back. It has to run before the first
+        // claim of the launch — keep-awake makes one on the next line — because
+        // a claim resolves what every source wants together, and a marker no
+        // source has spoken for yet resolves to nothing and is handed back whole.
+        SystemShortcutTakeover.recoverIfNeeded(keeping: AppSwitcher.launchTakeoverIDs())
         HotkeyManager.shared.onActivate = { KeepAwakeManager.shared.toggle() }
         HotkeyManager.shared.syncWithPreferences()
 
@@ -115,11 +131,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             KeepAwakeManager.shared.activateOnLaunchIfNeeded()
         }
         FanControlService.recoverIfNeeded()
-        // A marker from an earlier build may name a hotkey id this build no
-        // longer owns; give it back before any feature decides what to hold,
-        // except the ids the switcher is about to take over again, which stay
-        // off rather than flipping on and back.
-        SystemShortcutTakeover.recoverIfNeeded(keeping: AppSwitcher.launchTakeoverIDs())
         // One binding per feature: only available features are touched, so a
         // feature switched off in the hub never even instantiates here.
         FeatureRuntime.shared.syncAtLaunch()
@@ -137,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             .receive(on: DispatchQueue.main)
             .sink { _ in
                 FeatureRuntime.shared.sync([
-                    .scrollInverter, .focusFollowsMouse, .smoothScroll, .mouseNavigation, .switcher,
+                    .scrollInverter, .scrollHorizontal, .focusFollowsMouse, .smoothScroll, .mouseNavigation, .switcher,
                     .dockPreview, .finderCutPaste, .finderRename, .autoQuit, .dockClick,
                     .middleClick, .windowMaximizer, .keyboardDebounce, .windowLayout,
                     .textSnippets, .brightness, .radialMenu, .mouseButtonShortcuts,
@@ -270,6 +281,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         AudioInputDeviceManager.shared.stop()
         // Flushes any scratchpad edit still inside the save debounce.
         ScratchpadService.shared.suspend()
+        // Every macOS shortcut a feature took over goes back now, whichever
+        // feature held it; not all of them suspend here.
+        SystemShortcutTakeover.restoreAll()
         // The clipboard history persists through an async pipeline; the last
         // mutation (often a Clear) must land before the process dies.
         if AppFeature.clipboardHistory.isAvailable {
@@ -1406,6 +1420,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+        // Reopening on the very page that was showing at close never runs
+        // that page's own onAppear, since its view was never removed from
+        // the hierarchy; the window itself is the only reliable signal here.
+        SecureInputMonitor.shared.setSettingsWindowOpen(true)
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.settingsWindow else { return }
             self.positionSettingsWindow(window, force: false)
@@ -1908,6 +1926,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
                 settingsKeepsAppRegular = false
                 WindowActivationPolicy.release()
             }
+            // Whatever page was showing, its own onDisappear does not always
+            // run before the window finishes closing; stop the poll from
+            // here too rather than let it run until the app quits. The
+            // page's own demand is left alone, so it resumes on its own the
+            // moment the window reopens, on this page or any other.
+            SecureInputMonitor.shared.setSettingsWindowOpen(false)
             return
         }
         if window === onboardingWindow {
