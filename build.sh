@@ -312,6 +312,8 @@ if (( TEST )); then
         Sources/Vorssaint/Core/MenuBarAppearanceStrings.swift
         Sources/Vorssaint/Core/AppAppearance.swift
         Sources/Vorssaint/Core/AppearanceStrings.swift
+        Sources/Vorssaint/Core/GeneralSettingsStrings.swift
+        Sources/Vorssaint/Core/SettingsPageStrings.swift
         Sources/Vorssaint/Core/BatteryTimeStrings.swift
         Sources/Vorssaint/Core/KeepAwakeStrings.swift
         Sources/Vorssaint/Core/BluetoothSleepStrings.swift
@@ -348,6 +350,7 @@ if (( TEST )); then
         Sources/Vorssaint/Core/Localizations/Strings+*.swift
         Sources/Vorssaint/Core/FeatureStrings.swift
         Sources/Vorssaint/Core/KillProcessStrings.swift
+        Sources/Vorssaint/Core/PortManagerStrings.swift
         Sources/Vorssaint/Core/WhatsAppDownloadStrings.swift
         Sources/Vorssaint/Core/WhatsAppOrganizerStrings.swift
         Sources/Vorssaint/Core/ReleaseNotes.swift
@@ -382,6 +385,8 @@ if (( TEST )); then
         Sources/Vorssaint/Services/LaunchAtLoginSupport.swift
         Sources/Vorssaint/UI/Settings/SettingsSearchSupport.swift
         Sources/Vorssaint/UI/Settings/FeatureVisibilitySupport.swift
+        Sources/Vorssaint/UI/Settings/SettingsWindow.swift
+        Sources/Vorssaint/Core/SettingsNavigationStrings.swift
         Sources/Vorssaint/App/MenuBarSpacingSupport.swift
         Sources/Vorssaint/App/StatusItemAnchorSupport.swift
         Sources/Vorssaint/Services/DockClick/DockClickSupport.swift
@@ -448,6 +453,7 @@ if (( TEST )); then
         Sources/Vorssaint/Services/BoundedProcessRunner.swift
         Sources/Vorssaint/Services/DetachedProcess.swift
         Sources/Vorssaint/Services/ShellSupport.swift
+        Sources/Vorssaint/Services/PortManager/PortManagerSupport.swift
         Sources/Vorssaint/Services/Metrics/NetworkProcessSupport.swift
         Sources/Vorssaint/Services/Metrics/NetworkSampler.swift
         Sources/Vorssaint/Services/Metrics/SpeedTest.swift

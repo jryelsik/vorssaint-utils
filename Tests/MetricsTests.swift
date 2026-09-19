@@ -98,6 +98,44 @@ struct MetricsTests {
                          file: file, line: line)
         }
 
+        // MARK: Port manager parser
+
+        let lsofFixture = """
+        p123
+        cExample Server
+        PTCP
+        n127.0.0.1:3000
+        n127.0.0.1:3000
+        n[::1]:3000
+        n*:3001
+        p456
+        cOther Server
+        PTCP
+        n*:3000
+        """
+        let parsedPorts = PortManagerSupport.parseLsof(lsofFixture)
+        expect(parsedPorts.map(\.port) == [3000, 3000, 3000, 3001],
+               "port parser keeps every distinct listening endpoint and removes exact duplicates")
+        expect(parsedPorts.filter { $0.pid == 123 }.count == 3,
+               "port parser keeps multiple ports and address families for one process")
+
+        let invalidEndpointFixture = """
+        p789
+        cNo Port Process
+        PTCP
+        n*:4000
+        n127.0.0.1
+        """
+        let parsedInvalid = PortManagerSupport.parseLsof(invalidEndpointFixture)
+        expect(parsedInvalid.count == 1 && parsedInvalid.first?.port == 4000,
+               "port parser ignores address lines that lack a port instead of pairing with previous port")
+
+        for lang in AppLanguage.allCases {
+            let strings = FeatureStrings.portManager(lang)
+            expect(!strings.hubDescription.isEmpty,
+                   "port manager has a non-empty hub description for \(lang)")
+        }
+
         NotchTests.run { expect($0, $1) }
         NotchVolumeKeyTests.run { expect($0, $1) }
         MixerOutputAdjustmentContract.run(suite)
@@ -1713,6 +1751,9 @@ struct MetricsTests {
         expect(!focusFollowsMouseServiceSource.isEmpty
                 && !focusFollowsMouseServiceSource.contains("AXUIElementCreateSystemWide"),
                "focus follows mouse cannot re-enter its own Accessibility tree through a global hit test")
+        expect(focusFollowsMouseServiceSource.contains(
+                "!SpaceWindowBridge.isParkedOnHiddenSpace(target.windowID)"),
+               "focus follows mouse never hands a window on a hidden Space to the activator, which would travel")
 
         // A wheel that reports continuously already measures in points, and
         // that field is the one to trust; the line field only fills in for a
@@ -2472,6 +2513,17 @@ struct MetricsTests {
         ), "the Keep Awake lock guard accepts the session dictionary's numeric bridge")
         expect(!KeepAwakeAutomationSupport.isScreenLocked(sessionDictionary: nil),
                "an unreadable lock state does not strand Keep Awake in a pause")
+        let cal = Calendar.current
+        let now10 = cal.date(from: DateComponents(year: 2026, month: 1, day: 15, hour: 10, minute: 0))!
+        let pick14 = cal.date(from: DateComponents(year: 2026, month: 1, day: 15, hour: 14, minute: 30))!
+        let resolved1 = KeepAwakeAutomationSupport.resolvedUntilDate(picked: pick14, now: now10)
+        expect(cal.component(.hour, from: resolved1) == 14 && cal.component(.day, from: resolved1) == 15,
+               "resolvedUntilDate keeps a time still ahead today on today")
+        let now22 = cal.date(from: DateComponents(year: 2026, month: 1, day: 15, hour: 22, minute: 0))!
+        let pick7 = cal.date(from: DateComponents(year: 2026, month: 1, day: 15, hour: 7, minute: 0))!
+        let resolved2 = KeepAwakeAutomationSupport.resolvedUntilDate(picked: pick7, now: now22)
+        expect(cal.component(.hour, from: resolved2) == 7 && cal.component(.day, from: resolved2) == 16,
+               "resolvedUntilDate rolls a time already past today to tomorrow")
         let sleepDisabledReport = """
         System-wide power settings:
          SleepDisabled\t\t1
@@ -4271,6 +4323,8 @@ struct MetricsTests {
                "a click beyond the slack re-anchors by the full offset")
         expect(StatusItemAnchorSupport.anchorDriftX(clickX: 1240, reportedMidX: 1144, buttonWidth: 197) == nil,
                "clicks near the edge of a wide metrics item stay anchored to the item")
+
+        MenuPanelRecoveryTests.run { expect($0, $1) }
 
         // The built-in display and a taller one placed to its left.
         let builtInScreen = CGRect(x: 0, y: 0, width: 1470, height: 956)
@@ -13912,6 +13966,37 @@ struct MetricsTests {
                     "https://www.reddit.com/r/swift/comments/abc/?sort=new",
                     "URL cleaner strips Reddit's deep-link tracking in either spelling")
 
+        // The silent rewrite keeps only text and URL, so it runs when nothing
+        // else on the pasteboard would be lost.
+        expect(URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "public.url", "public.url-name",
+                                                        "NSStringPboardType", "NSURLPboardType"]),
+               "a plain link copy can be rewritten")
+        expect(!URLCleaning.canRewritePasteboard(types: []),
+               "an empty pasteboard is left alone")
+        expect(URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "public.html", "public.rtf",
+                                                        "com.apple.flat-rtfd", "public.utf16-external-plain-text"]),
+               "formatted copies of the same link are dropped by the rewrite, not protected")
+        expect(URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "public.url",
+                                                        "org.chromium.source-url", "org.chromium.web-custom-data",
+                                                        "com.apple.WebKit.custom-pasteboard-data",
+                                                        "dyn.ah62d4rv4gu8y6y4grf0gn5xbrzw1gydcr7u1e3cytf2gn"]),
+               "a browser's or a messaging app's private notes about the copy do not block the rewrite")
+        expect(!URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "public.url", "public.tiff", "public.png"]),
+               "a copied picture with its source link as text is left alone")
+        expect(!URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "public.file-url", "NSFilenamesPboardType"])
+                && !URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "NSFilenamesPboardType"])
+                && !URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text",
+                                                             "com.apple.pasteboard.promised-file-url",
+                                                             "com.apple.pasteboard.promised-file-content-type"]),
+               "a copied or promised file is left alone")
+        expect(!URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "com.adobe.pdf"])
+                && !URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "public.mpeg-4"])
+                && !URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "com.apple.webarchive"]),
+               "a document, a movie or a web archive next to the text is left alone")
+        expect(!URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "org.nspasteboard.ConcealedType"])
+                && !URLCleaning.canRewritePasteboard(types: ["public.utf8-plain-text", "org.nspasteboard.TransientType"]),
+               "a concealed or transient copy is never rewritten")
+
         // MARK: Homebrew command building and parsing
 
         let homebrewManagerSource = (try? String(
@@ -14488,7 +14573,6 @@ struct MetricsTests {
             expect(!strings.homebrewUpdateHomebrew.isEmpty, "\(prefix) Homebrew update Homebrew title is present")
             expectFormat(strings.switcherIconRowMode, ["@"], "\(prefix) App Switcher icon-row title format")
             expect(!strings.switcherIconRowModeCaption.isEmpty, "\(prefix) App Switcher icon-row caption is present")
-            expect(!strings.switcherSimpleMode.isEmpty, "\(prefix) App Switcher simple-mode title is present")
             expect(!strings.switcherSimpleModeCaption.isEmpty, "\(prefix) App Switcher simple-mode caption is present")
             expect(!strings.switcherCurrentSpaceOnly.isEmpty
                    && !strings.switcherCurrentSpaceOnly.contains("—"),
@@ -15551,18 +15635,25 @@ struct MetricsTests {
                "brightness keys do not arm the blocker")
         expect(!MusicLaunchSupport.isMusicLaunchTrigger(subtype: 1, data1: musicKeyData(keyCode: 16)),
                "other system-defined subtypes do not arm the blocker")
-        expect(!MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: nil),
-               "without a recent media key the music app may open")
-        expect(MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: 9.5),
-               "a launch in the arm window after a media key is blocked")
-        expect(MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: 8.0),
+        expect(MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: 9.5, secondsSinceUserGesture: 0.1),
+               "a launch in the arm window after a media key is blocked even right after a click")
+        expect(MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: 8.0, secondsSinceUserGesture: 0.1),
                "a launch on the arm-window edge is still blocked")
-        expect(!MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: 7.9),
-               "a launch after the arm window is left alone")
+        expect(!MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: 7.9, secondsSinceUserGesture: 0.1),
+               "a launch after the arm window that follows a click is left alone")
+        expect(!MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: nil, secondsSinceUserGesture: 0.3),
+               "a launch right after a click or a key press is the user's, with no media key seen")
+        expect(!MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: nil,
+                                                     secondsSinceUserGesture: MusicLaunchSupport.userGestureWindow),
+               "a launch on the gesture-window edge is still the user's")
+        expect(MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: nil, secondsSinceUserGesture: 2.1),
+               "a launch with no recent click or key press came from headphones or a remote command and is blocked")
+        expect(MusicLaunchSupport.shouldBlockLaunch(now: 10, lastTriggerAt: nil, secondsSinceUserGesture: .infinity),
+               "a launch in a session with no gesture at all is blocked, without any media key tap")
 
         // MARK: Features hub catalog
 
-        expect(AppFeature.allCases.count == 69, "feature catalog has 69 features")
+        expect(AppFeature.allCases.count == 70, "feature catalog has 70 features")
         expect(Set(AppFeature.allCases.map(\.rawValue)).count == AppFeature.allCases.count,
                "feature ids are unique")
         expect(AppFeature.allCases.map(\.rawValue) == [
@@ -15575,7 +15666,7 @@ struct MetricsTests {
             "keepAwake", "brightness", "extraBrightness", "bluetoothSleep",
             "quickLauncher", "quickToggles", "colorPicker", "screenOCR", "cleaningMode", "mediaTools",
             "cleaner", "uninstaller", "homebrew", "appUpdates", "screenshot", "cameraPreview",
-            "radialMenu", "scratchpad", "commandBar", "screenRecorder", "killProcess", "notch", "notchCalendar", "notchNotifications", "notchGestures", "notchTimer", "notchAccessories", "notchLyrics", "notchQueue", "notchLiveEqualizer", "notchDownloads",
+            "radialMenu", "scratchpad", "commandBar", "screenRecorder", "killProcess", "portManager", "notch", "notchCalendar", "notchNotifications", "notchGestures", "notchTimer", "notchAccessories", "notchLyrics", "notchQueue", "notchLiveEqualizer", "notchDownloads",
             "monitorCPU", "monitorGPU", "monitorMemory", "monitorNetwork", "monitorDisk", "monitorUSB", "monitorPower",
             "fanControl",
         ], "feature ids are stable (they persist inside availability keys)")
@@ -15700,9 +15791,10 @@ struct MetricsTests {
                 && (AppFeature.availabilityDefaults[AppFeature.diskImageInstaller.availabilityKey] as? Bool) == false
                 && (AppFeature.availabilityDefaults[AppFeature.focusFollowsMouse.availabilityKey] as? Bool) == false
                 && (AppFeature.availabilityDefaults[AppFeature.killProcess.availabilityKey] as? Bool) == false
+                && (AppFeature.availabilityDefaults[AppFeature.portManager.availabilityKey] as? Bool) == false
                 && AppFeature.allCases.filter {
                     $0 != .focusFollowsMouse && $0 != .fanControl && $0 != .diskImageInstaller
-                        && $0 != .killProcess && $0 != .scrollHorizontal
+                        && $0 != .killProcess && $0 != .scrollHorizontal && $0 != .portManager
                 }.allSatisfy {
                     (AppFeature.availabilityDefaults[$0.availabilityKey] as? Bool) == true
                 },
@@ -15833,17 +15925,17 @@ struct MetricsTests {
 
         for language in AppLanguage.allCases {
             let strings = FeatureStrings.diskImageInstaller(language)
-            expectFormat(strings.promptBodyFormat, ["@"],
+            expectFormat(strings.promptBodyFormat, ["@", "@"],
                          "\(language.rawValue) installer prompt format")
-            expectFormat(strings.installedBodyFormat, ["@"],
+            expectFormat(strings.installedBodyFormat, ["@", "@"],
                          "\(language.rawValue) installer success format")
-            expectFormat(strings.installedKeepingMountBodyFormat, ["@"],
+            expectFormat(strings.installedKeepingMountBodyFormat, ["@", "@"],
                          "\(language.rawValue) installer mounted-image format")
-            expectFormat(strings.installedKeepingDownloadBodyFormat, ["@"],
+            expectFormat(strings.installedKeepingDownloadBodyFormat, ["@", "@"],
                          "\(language.rawValue) installer kept-download format")
             expectFormat(strings.alreadyInstalledBodyFormat, ["@"],
                          "\(language.rawValue) installer existing-app format")
-            expectFormat(strings.installedKeptDownloadBodyFormat, ["@"],
+            expectFormat(strings.installedKeptDownloadBodyFormat, ["@", "@"],
                          "\(language.rawValue) installer kept-by-choice format")
             expectFormat(strings.installingFormat, ["@"],
                          "\(language.rawValue) installer progress format")
@@ -15877,6 +15969,56 @@ struct MetricsTests {
             applicationsURL: URL(fileURLWithPath: "/Applications", isDirectory: true))?.path
             == "/Applications/Example.app",
             "a top-level app gets one fixed Applications destination")
+        expect(DiskImageInstallerSupport.destinationURL(
+            for: URL(fileURLWithPath: "/Volumes/Installer/Example.app"),
+            applicationsURL: URL(fileURLWithPath: "/Users/test/Applications",
+                                 isDirectory: true))?.path
+            == "/Users/test/Applications/Example.app",
+            "the installer support accepts the current user's Applications directory")
+        expect(DiskImageInstallerSupport.applicationsDomain(useUserApplications: false)
+                == .localDomainMask
+                && DiskImageInstallerSupport.applicationsDomain(useUserApplications: true)
+                == .userDomainMask,
+               "the disk image setting selects the system or user application domain")
+        expect(DiskImageInstallerSupport.collisionDomains(useUserApplications: false)
+                == [.localDomainMask]
+                && DiskImageInstallerSupport.collisionDomains(useUserApplications: true)
+                == [.localDomainMask, .userDomainMask],
+               "only the opt-in installer checks both application domains for collisions")
+        let installerDestinations = DiskImageInstallerSupport.destinationURLs(
+            for: URL(fileURLWithPath: "/Volumes/Installer/Example.app"),
+            applicationsURLs: [
+                URL(fileURLWithPath: "/Applications", isDirectory: true),
+                URL(fileURLWithPath: "/Users/test/Applications", isDirectory: true),
+            ])
+        expect(installerDestinations?.map(\.path) == [
+            "/Applications/Example.app",
+            "/Users/test/Applications/Example.app",
+        ], "the already-installed guard covers both application directories")
+        expect(DiskImageInstallerSupport.destinationURLs(
+            for: URL(fileURLWithPath: "/Volumes/Installer/Example.app"),
+            applicationsURLs: []) == nil,
+            "missing application-domain resolutions fail closed")
+        let installerFixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vorss-installer-\(UUID().uuidString)", isDirectory: true)
+        let installerFM = InstallerFileManager(root: installerFixture)
+        let installerApp = URL(fileURLWithPath: "/Volumes/Installer/Example.app")
+        let missingUserDestination = installerFM.userApplications!
+            .appendingPathComponent("Example.app", isDirectory: true)
+        let missingFolderCollisions = DiskImageInstallerSupport.collisionURLs(
+            for: installerApp, useUserApplications: true, fileManager: installerFM)
+        expect(missingFolderCollisions?.contains(missingUserDestination) == true
+                && missingFolderCollisions?.allSatisfy { !installerFM.fileExists(atPath: $0.path) } == true,
+               "a missing home Applications folder still allows an install candidate")
+        expect(!installerFM.fileExists(atPath: installerFixture.path),
+               "detecting an install candidate never creates the home Applications folder")
+        installerFM.userApplications = nil
+        expect(DiskImageInstallerSupport.collisionURLs(
+            for: installerApp, useUserApplications: true, fileManager: installerFM) == nil,
+            "an unavailable user search path fails closed for opted-in installs")
+        expect(DiskImageInstallerSupport.collisionURLs(
+            for: installerApp, useUserApplications: false, fileManager: installerFM)?.count == 1,
+            "default installs do not depend on the user's application search path")
         expect(DiskImageInstallerSupport.destinationURL(
             for: URL(fileURLWithPath: "/Volumes/Installer/.Hidden.app"),
             applicationsURL: URL(fileURLWithPath: "/Applications", isDirectory: true)) == nil,
@@ -16905,6 +17047,81 @@ struct MetricsTests {
         settingsRouter.page = .general
         withExtendedLifetime(settingsRequestObservation) {}
 
+        let historyRouter = SettingsRouter()
+        let initialHistoryRequestID = historyRouter.requestID
+        historyRouter.goBack()
+        historyRouter.goForward()
+        expect(historyRouter.page == .general && historyRouter.requestID == initialHistoryRequestID,
+               "an empty Settings history does not navigate or publish requests")
+        historyRouter.page = .about
+        historyRouter.request(repeatedDestination)
+        historyRouter.goBack()
+        expect(historyRouter.page == .about
+                && historyRouter.destination == FeatureSettingsDestination(.about),
+               "Settings Back includes direct sidebar-style page assignments")
+        historyRouter.goBack()
+        expect(historyRouter.page == .general, "Settings Back reaches the initial page")
+        let oldestHistoryRequestID = historyRouter.requestID
+        historyRouter.goBack()
+        expect(historyRouter.requestID == oldestHistoryRequestID,
+               "Settings Back stops at the oldest visit")
+        historyRouter.goForward()
+        expect(historyRouter.page == .about, "Settings Forward retraces the visited pages")
+        historyRouter.goForward()
+        expect(historyRouter.destination == repeatedDestination
+                && historyRouter.pendingDestinationRequest?.destination == repeatedDestination,
+               "Settings history restores section anchors with a fresh focus request")
+        let newestHistoryRequestID = historyRouter.requestID
+        historyRouter.goForward()
+        expect(historyRouter.requestID == newestHistoryRequestID,
+               "Settings Forward stops at the newest visit")
+
+        historyRouter.page = .mouse
+        let refinedDestination = FeatureSettingsDestination(.mouse, sectionAnchor: .smoothScroll)
+        historyRouter.request(refinedDestination)
+        historyRouter.request(refinedDestination)
+        historyRouter.goBack()
+        expect(historyRouter.page == .about,
+               "repeated page selections and same-page section requests do not duplicate history")
+        historyRouter.goForward()
+        expect(historyRouter.destination == refinedDestination,
+               "same-page section requests refine the destination restored by history")
+        historyRouter.goBack()
+        historyRouter.page = .support
+        let branchedHistoryRequestID = historyRouter.requestID
+        historyRouter.goForward()
+        expect(historyRouter.page == .support && historyRouter.requestID == branchedHistoryRequestID,
+               "a new sidebar visit after Back discards forward history")
+        historyRouter.goBack()
+        historyRouter.request(FeatureSettingsDestination(.features), targetFeature: .homebrew)
+        historyRouter.goForward()
+        expect(historyRouter.page == .features,
+               "a destination request after Back also discards forward history")
+        historyRouter.page = .advanced
+        expect(historyRouter.destination == FeatureSettingsDestination(.advanced)
+                && historyRouter.pendingDestinationRequest == nil
+                && historyRouter.pendingFeatureTarget == nil,
+               "direct page navigation synchronizes the destination and clears stale reveal requests")
+
+        let hiddenHistoryRouter = SettingsRouter()
+        hiddenHistoryRouter.page = .mouse
+        hiddenHistoryRouter.page = .about
+        hiddenHistoryRouter.goBack(isPageVisible: { $0 != .mouse })
+        expect(hiddenHistoryRouter.page == .general,
+               "Settings Back skips pages whose features are no longer available")
+        hiddenHistoryRouter.goForward(isPageVisible: { $0 != .mouse })
+        expect(hiddenHistoryRouter.page == .about,
+               "skipping a hidden page preserves forward history")
+        let visibleHistoryRequestID = hiddenHistoryRouter.requestID
+        hiddenHistoryRouter.goBack(isPageVisible: { _ in false })
+        expect(hiddenHistoryRouter.page == .about
+                && hiddenHistoryRouter.requestID == visibleHistoryRequestID,
+               "Settings history stays put when no earlier page is visible")
+        hiddenHistoryRouter.cleanerTool = "stale-tool"
+        hiddenHistoryRouter.goBack()
+        expect(hiddenHistoryRouter.page == .mouse && hiddenHistoryRouter.cleanerTool == nil,
+               "history can revisit re-enabled pages without replaying a stale Cleaner tool hint")
+
         // MARK: Display brightness (DDC/CI helpers)
 
         // Every section of the service below its "Rebuild (work queue)" MARK
@@ -17073,7 +17290,7 @@ struct MetricsTests {
         // where the slider is just as dead, so both surfaces offer the way out.
         // Neither can be rendered here, so the shared control is pinned as
         // source shape.
-        for surface in ["Sources/Vorssaint/UI/Settings/SettingsView.swift",
+        for surface in ["Sources/Vorssaint/UI/Settings/EnergySettings.swift",
                         "Sources/Vorssaint/UI/MenuPanel/BrightnessSection.swift"] {
             let source = (try? String(contentsOfFile: surface, encoding: .utf8)) ?? ""
             expect(source.contains("SoftwareDimmingButton(display: display"),
@@ -19650,6 +19867,27 @@ struct MetricsTests {
         expect(!ScreenshotSupport.canReorder(layered, moving: UUID(), .forward)
                 && !ScreenshotSupport.canReorder([], moving: layered[0].id, .backward),
                "an annotation that is not there can never be reordered")
+        let screenshotEditorSource = ((try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/QuickTools/ScreenshotEditorController.swift",
+            encoding: .utf8)) ?? "")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        let screenshotSupportSource = ((try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/QuickTools/ScreenshotSupport.swift",
+            encoding: .utf8)) ?? "")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        expect(screenshotEditorSource.contains("if tool != .select, tool != .crop {\n            selectedID = nil\n        }"),
+               "the editor clears stale selection before creating a new annotation")
+        expect(!screenshotEditorSource.contains("annotations.append(annotation)\n            selectedID = annotation.id\n            draftID = annotation.id")
+                && screenshotEditorSource.contains("} else if let draftID {\n                selectedID = draftID"),
+               "a shape is selected only after its drag ends")
+        expect(screenshotSupportSource.contains("let color: ColorID?")
+                && screenshotSupportSource.contains("let stroke: StrokeID?")
+                && screenshotSupportSource.contains("let arrowStyle: ArrowStyleID?"),
+               "selection styles can leave controls untouched when a mark does not use them")
 
         let resized = ScreenshotSupport.resizedRect(CGRect(x: 10, y: 10, width: 100, height: 100),
                                                     dragging: .bottomRight,
@@ -19693,6 +19931,128 @@ struct MetricsTests {
                                   using: .winding,
                                   transform: .identity),
                "the arrow stays filled where its shaft meets the head")
+        let arrowStyles = ScreenshotSupport.ArrowStyleID.allCases
+        expect(arrowStyles == [.filled, .outline, .open, .doubleEnded, .scribbly]
+                && ScreenshotSupport.ArrowStyleID.sanitized("unknown") == .filled,
+               "the screenshot editor offers five arrow styles and safely falls back to solid")
+        let openArrow = ScreenshotSupport.Annotation(tool: .arrow,
+                                                     points: [.zero, CGPoint(x: 100, y: 100)],
+                                                     arrowStyle: .open)
+        expect(openArrow.arrowStyle == .open,
+               "arrow annotations retain the chosen style independently of color and thickness")
+        let stableScribble = ScreenshotSupport.scribblyArrowGeometry(
+            from: .zero,
+            to: CGPoint(x: 160, y: 80),
+            strokeWidth: 4,
+            seed: 17)
+        let sameScribble = ScreenshotSupport.scribblyArrowGeometry(
+            from: .zero,
+            to: CGPoint(x: 160, y: 80),
+            strokeWidth: 4,
+            seed: 17)
+        let differentScribble = ScreenshotSupport.scribblyArrowGeometry(
+            from: .zero,
+            to: CGPoint(x: 160, y: 80),
+            strokeWidth: 4,
+            seed: 18)
+        expect(stableScribble == sameScribble
+                && stableScribble != differentScribble
+                && stableScribble.shaft.count > 2,
+               "scribbly arrows vary by seed but keep one stable design when redrawn")
+        expect(ScreenshotSupport.arrowStrokePath(from: .zero, to: CGPoint(x: 100, y: 0),
+                                                 strokeWidth: 4, style: .filled, seed: 0) == nil
+                && arrowStyles.filter { $0 != .filled }.allSatisfy {
+                    ScreenshotSupport.arrowStrokePath(from: .zero, to: CGPoint(x: 100, y: 0),
+                                                      strokeWidth: 4, style: $0, seed: 17)?
+                        .boundingBox.width ?? 0 >= 100
+                },
+               "the solid arrow is a filled silhouette and every other style is one stroked path")
+        // With shadows on, a shaft pixel under the head's shadow must match a
+        // shaft pixel far from the head: the head and the shaft are one
+        // stroke, so the head never shades the shaft where they meet.
+        let seamShaft: [ScreenshotSupport.ArrowStyleID: Bool] = Dictionary(
+            uniqueKeysWithValues: [ScreenshotSupport.ArrowStyleID.open, .doubleEnded].map { style in
+                let width = 160, height = 80
+                var pixels = [UInt8](repeating: 0, count: width * height * 4)
+                let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+                    guard let context = CGContext(data: buffer.baseAddress,
+                                                  width: width,
+                                                  height: height,
+                                                  bitsPerComponent: 8,
+                                                  bytesPerRow: width * 4,
+                                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                    else { return false }
+                    context.translateBy(x: 0, y: CGFloat(height))
+                    context.scaleBy(x: 1, y: -1)
+                    ScreenshotRenderer.drawAnnotations(
+                        [ScreenshotSupport.Annotation(tool: .arrow,
+                                                      points: [CGPoint(x: 20, y: 40), CGPoint(x: 140, y: 40)],
+                                                      color: .green,
+                                                      stroke: .large,
+                                                      arrowStyle: style)],
+                        in: context,
+                        pixelated: nil,
+                        imageSize: CGSize(width: width, height: height),
+                        scale: 2,
+                        annotationShadowsEnabled: true)
+                    return true
+                }
+                // Rows are stored top-down, the same way the flipped context draws.
+                func pixel(_ x: Int, _ y: Int) -> ArraySlice<UInt8> {
+                    let offset = (y * width + x) * 4
+                    return pixels[offset..<offset + 4]
+                }
+                return (style, drawn && pixel(120, 40) == pixel(60, 40) && pixel(60, 40).last == 255)
+            })
+        expect(seamShaft.values.allSatisfy { $0 },
+               "a stroked arrow's head casts no shadow onto its own shaft")
+        let thickArrow = ScreenshotSupport.Annotation(tool: .arrow, stroke: .large)
+        let thinArrow = ScreenshotSupport.Annotation(tool: .arrow, stroke: .small)
+        expect(ScreenshotSupport.selectionStyle(for: thinArrow).stroke == .some(.small)
+                && ScreenshotSupport.selectionStyle(for: thinArrow)
+                    != ScreenshotSupport.selectionStyle(for: thickArrow),
+               "selecting a thin arrow exposes its own stroke in the editor controls")
+        let stickerStyle = ScreenshotSupport.selectionStyle(
+            for: ScreenshotSupport.Annotation(tool: .sticker,
+                                               color: .blue,
+                                               stroke: .large))
+        let pixelateStyle = ScreenshotSupport.selectionStyle(
+            for: ScreenshotSupport.Annotation(tool: .pixelate,
+                                               color: .green,
+                                               stroke: .large))
+        let highlightStyle = ScreenshotSupport.selectionStyle(
+            for: ScreenshotSupport.Annotation(tool: .highlight,
+                                               color: .yellow,
+                                               stroke: .large))
+        expect(stickerStyle == ScreenshotSupport.SelectionStyle(color: nil,
+                                                                stroke: nil,
+                                                                arrowStyle: nil)
+                && pixelateStyle == stickerStyle
+                && highlightStyle.color == .some(.yellow)
+                && highlightStyle.stroke == nil
+                && highlightStyle.arrowStyle == nil,
+               "selection sync leaves unused sticker and pixelation controls alone")
+        expect(screenshotEditorSource.contains("syncControls(to: hit)"),
+               "the editor synchronizes controls from the selected annotation")
+        let existingSelectionSource: String
+        if let start = screenshotEditorSource.range(of: "private func selectExistingAnnotation"),
+           let end = screenshotEditorSource.range(of: "private func updateDraft") {
+            existingSelectionSource = String(screenshotEditorSource[start.lowerBound..<end.lowerBound])
+        } else {
+            existingSelectionSource = ""
+        }
+        expect(existingSelectionSource.contains("syncControls(to: hit)"),
+               "creation-tool taps synchronize controls before selecting the annotation")
+        let finishSelectionSource: String
+        if let start = screenshotEditorSource.range(of: "private func finishSelectDrag"),
+           let end = screenshotEditorSource.range(of: "private func selectExistingAnnotation") {
+            finishSelectionSource = String(screenshotEditorSource[start.lowerBound..<end.lowerBound])
+        } else {
+            finishSelectionSource = ""
+        }
+        expect(finishSelectionSource.contains("syncControls(to: hit)"),
+               "selection-tool taps synchronize controls for every selected mark")
         expect(abs(ScreenshotSupport.distance(from: CGPoint(x: 50, y: 10),
                                               toSegment: CGPoint(x: 0, y: 0),
                                               CGPoint(x: 100, y: 0)) - 10) < 0.001,
@@ -20490,6 +20850,8 @@ struct MetricsTests {
                "the screenshot rail ships in its useful numbered order")
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotLastSticker] as? String == "check",
                "the sticker tool starts with a safe built-in choice")
+        expect(Defaults.registeredDefaults[DefaultsKey.screenshotLastArrowStyle] as? String == "filled",
+               "the arrow tool starts with the existing solid style")
         expect(Defaults.registeredDefaults[DefaultsKey.screenshotShortcut] as? String
                 == "control+option+command:21",
                "the default screenshot shortcut is control option command 4")
@@ -20991,6 +21353,26 @@ struct MetricsTests {
                                                  present: ["mic-a", "mic-b"]).isEmpty
                 && MicMuteSupport.restoreTargets(recorded: ["mic-a"], present: []).isEmpty,
                "unmuting touches the microphones this app muted, every one with no record, and none when the record is empty")
+        expect(MicMuteSupport.absentClaims(recorded: ["mic-a", "headset"], present: ["mic-a"]) == ["headset"]
+                && MicMuteSupport.absentClaims(recorded: ["mic-a"], present: ["mic-a", "mic-b"]).isEmpty
+                && MicMuteSupport.absentClaims(recorded: nil, present: ["mic-a"]).isEmpty
+                && MicMuteSupport.absentClaims(recorded: ["headset"], present: []) == ["headset"],
+               "a sweep keeps the claim on a microphone this app muted that is unplugged right now, so it is released when it returns")
+        // The persisted flag and the published state only follow a sweep once
+        // it has published, while the claims are recorded on the queue as it
+        // runs. A device change landing in between must re-assert the request
+        // in flight, or a mute still being applied reads as "unmuted with
+        // claims" and gets silently undone.
+        let micMuteServiceSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/QuickTools/MicMuteService.swift",
+            encoding: .utf8)) ?? ""
+        let reapply = micMuteServiceSource.range(of: "private func reapplyIfNeeded() {")
+            .map { micMuteServiceSource[$0.lowerBound...] }
+            .flatMap { body in body.range(of: "\n    }\n").map { body[..<$0.lowerBound] } }
+            .map(String.init) ?? ""
+        expect(reapply.contains("if wantsMute {") && !reapply.contains("micMuteActive")
+                && micMuteServiceSource.contains("private func apply(muted: Bool, announce: Bool) {\n        wantsMute = muted"),
+               "a device change re-asserts the mute request in flight, never the persisted flag it is about to replace")
 
         expect(Defaults.registeredDefaults[DefaultsKey.radialMenuEnabled] as? Bool == false,
                "the radial menu ships off by default")
@@ -21380,7 +21762,7 @@ struct MetricsTests {
         }
 
         let mouseSettingsViewLines = ((try? String(
-            contentsOfFile: "Sources/Vorssaint/UI/Settings/SettingsView.swift",
+            contentsOfFile: "Sources/Vorssaint/UI/Settings/MouseSettings.swift",
             encoding: .utf8)) ?? "").components(separatedBy: "\n")
         let menuPanelLines = ((try? String(
             contentsOfFile: "Sources/Vorssaint/UI/MenuPanel/MenuPanelView.swift",
@@ -22738,6 +23120,10 @@ struct MetricsTests {
         expect(Defaults.registeredDefaults[DefaultsKey.finderPasteImageAsFile] as? Bool == false
                 && backupKeys.contains(DefaultsKey.finderPasteImageAsFile),
                "pasting copied images as files is opt-in and travels with settings backup")
+        expect(Defaults.registeredDefaults[
+            DefaultsKey.diskImageInstallerUseUserApplications] as? Bool == false
+                && backupKeys.contains(DefaultsKey.diskImageInstallerUseUserApplications),
+               "installing disk-image apps for the current user is opt-in and travels with settings backup")
         expect(Defaults.registeredDefaults[DefaultsKey.finderCutPasteShowHUD] as? Bool == true
                 && backupKeys.contains(DefaultsKey.finderCutPasteShowHUD),
                "the Finder cut and paste floating panel default is on and travels with settings backup")
@@ -27406,6 +27792,33 @@ struct MetricsTests {
                "in-app uninstall aborts unless fans and normal sleep are restored before removal")
         expect(uninstallScriptSource.contains("SleepDisabled"),
                "script uninstall reads the sleep setting back for itself")
+        // The roster in `suspendInputInterceptors` has to cover every service
+        // that keeps a session-level head-insert tap alive, since one still
+        // live when Accessibility is revoked is the freeze that teardown
+        // exists to prevent. Quit protection and text snippets both keep one
+        // and all three were missing. BrightnessService keeps both a
+        // system-defined media tap and a function-key tap that sees every key
+        // press, so it belongs in the same teardown. Only those taps come
+        // down: display routes and gamma state must survive the reset.
+        let brightnessTapMethod = brightnessSource
+            .components(separatedBy: "    func suspendInputTaps()").dropFirst().first?
+            .components(separatedBy: "    private func installFunctionKeyTap").first ?? ""
+        let brightnessTapCode = stripCommentLines(brightnessTapMethod)
+        expect(selfUninstallSource.contains("TextSnippetService.shared.suspend()")
+                && selfUninstallSource.contains("QuitProtectionService.shared.suspend()")
+                && selfUninstallSource.contains("BrightnessService.shared.suspendInputTaps()")
+                && selfUninstallSource.contains("BrightnessService.shared.resumeInputTaps()")
+                && brightnessTapCode.contains("inputTapsSuspended = true")
+                && brightnessTapCode.contains("removeKeyTap()")
+                && brightnessTapCode.contains("removeFunctionKeyTap()")
+                && !brightnessTapCode.contains("restoreManagedDisplays")
+                && !brightnessTapCode.contains("restoreAllGamma"),
+               "the permission teardown stops every persistent keyboard tap")
+        let quitProtectionSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/QuitProtection/QuitProtectionService.swift",
+            encoding: .utf8)) ?? ""
+        expect(quitProtectionSource.contains("func suspend()"),
+               "quit protection exposes the teardown the permission reset calls")
 
         // MARK: Secure input
         // The Carbon flag is the authority on whether secure input is on; the
@@ -27900,6 +28313,8 @@ struct MetricsTests {
                 && diskExclusionsListCode.contains("QuickTogglesSupport.isExcluded("),
                "the exclusions picker asks the shared exclusion test, UUID included, not a name-only one")
 
+        SettingsWindowTests.run { expect($0, $1) }
+
         scratchPaths.forEach { try? FileManager.default.removeItem(at: $0) }
 
     }
@@ -28189,6 +28604,23 @@ struct MetricsTests {
                     && !unavailable.save(empty)
                     && defaults.data(forKey: DefaultsKey.scratchpadDocument) == originalData,
                    "an unavailable private container never discards stored notes")
+        }
+    }
+
+    private final class InstallerFileManager: FileManager, @unchecked Sendable {
+        let localApplications: URL
+        var userApplications: URL?
+
+        init(root: URL) {
+            localApplications = root.appendingPathComponent("System/Applications", isDirectory: true)
+            userApplications = root.appendingPathComponent("Home/Applications", isDirectory: true)
+            super.init()
+        }
+
+        override func urls(for directory: SearchPathDirectory, in domain: SearchPathDomainMask) -> [URL] {
+            guard directory == .applicationDirectory else { return [] }
+            if domain == .localDomainMask { return [localApplications] }
+            return userApplications.map { [$0] } ?? []
         }
     }
 
