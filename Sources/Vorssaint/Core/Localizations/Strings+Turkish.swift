@@ -243,6 +243,8 @@ extension Strings {
         dockPreviewOpenDelayCaption: "Panelin açılması için imlecin bir simgenin üzerinde ne kadar bekleyeceği.",
         dockPreviewQuitAppOnClose: "× düğmesiyle uygulamadan çık",
         dockPreviewQuitAppOnCloseCaption: "Dock Preview’da × yalnızca o pencereyi kapatmak yerine uygulamadan tamamen çıkar.",
+        dockPreviewKeepDockVisible: "Dock’u görünür tut (deneysel)",
+        dockPreviewKeepDockVisibleCaption: "Önizleme açıkken otomatik gizlemeyi duraklatır ve ayrıldığınızda geri açar. Pencereler yeniden boyutlanabilir. Uygulama kesintiye uğrarsa Dock’u geri yüklemek için yeniden açın.",
         dockPreviewOrderByCreation: "Pencereleri oluşturma zamanına göre sırala",
         dockPreviewOrderByCreationCaption: "En son kullanılanlar yerine önce daha eski pencereleri göster.",
         dockClickMinimize: "Dock simgesine tıklayınca küçült",
@@ -702,6 +704,8 @@ extension Strings {
         betaFeatureWarning: "Beta. Bazı hatalarla karşılaşabilirsin.",
 
         networkSection: "Ağ",
+        networkIPAddresses: "IP adresleri",
+        networkLocalIP: "Yerel IPv4",
         networkDownload: "İndirme",
         networkUpload: "Yükleme",
         networkThisSession: "Bu oturum",

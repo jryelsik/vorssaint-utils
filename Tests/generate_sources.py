@@ -16,9 +16,16 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "build/generated-tests"
 
 
-def declaration(path, prefix):
+def declaration(path, prefix, scope=None):
     lines = (ROOT / path).read_text().splitlines(keepends=True)
-    starts = [i for i, line in enumerate(lines) if line.startswith(prefix)]
+    lower, upper = 0, len(lines)
+    if scope is not None:
+        scopes = [i for i, line in enumerate(lines) if line.startswith(scope)]
+        if len(scopes) != 1:
+            raise ValueError(f"Expected one scope {scope!r} in {path}")
+        lower = scopes[0] + 1
+        upper = next(i for i in range(lower, len(lines)) if lines[i].rstrip() == "}")
+    starts = [i for i in range(lower, upper) if lines[i].startswith(prefix)]
     if len(starts) != 1:
         raise ValueError(f"Expected one declaration {prefix!r} in {path}")
     start = starts[0]
@@ -104,6 +111,10 @@ def main():
           + declaration("Sources/Vorssaint/Services/Finder/FinderCutPaste.swift", "    static func selectionURLs(")
           + "}\n")
     dock = "Sources/Vorssaint/Services/DockPreview/DockPreviewService.swift"
+    write("DockPreviewFrameRetry.swift", "import Foundation\nextension DockPreviewFrameRestorationTests {\n"
+          + declaration("Sources/Vorssaint/Services/DockPreview/DockPreviewFrameRestoration.swift",
+                        "    private static func restore(").replace("private static func", "static func", 1)
+          + "}\n")
     write("DockPreviewScope.swift", "import Foundation\nextension DockPreviewScopeTests.Service {\n"
           + "".join(declaration(dock, prefix).replace("private func", "func", 1)
                     for prefix in ["    private func syncSpaceObservation()",
@@ -111,6 +122,15 @@ def main():
           + "}\nextension DockPreviewScopeTests.WindowEnumerator {\n"
           + declaration("Sources/Vorssaint/Services/Switcher/WindowEnumerator.swift",
                         "    static func dockPreviewMayActivate(")
+          + "}\n")
+    write("DockAutohideInput.swift", "import CoreGraphics\nimport Foundation\nextension DockAutohideHoldTests.Service {\n"
+          + "".join(declaration(dock, prefix, scope="final class DockPreviewService:")
+                    .replace("private func", "func", 1)
+                    for prefix in ["    private func beginDockAutohideHold()",
+                                   "    private func releaseDockAutohideHold()",
+                                   "    private func handleDockHoldInput(type:",
+                                   "    private func handle(type:",
+                                   "    func commit("])
           + "}\n")
     # Entire input/mute services retain their production control flow. Only
     # visibility, scheduling, defaults and HAL transport are replaced by fixtures.
@@ -235,6 +255,23 @@ def main():
               "    private func bindVolumeEvents(", "    private func volumeChanged(",
               "    private func showVolume(", "    func showCurrentVolume("])
           + "}\n}\n")
+    scratchpad_service = "Sources/Vorssaint/Services/QuickTools/ScratchpadService.swift"
+    scratchpad_view = "Sources/Vorssaint/UI/Notch/NotchScratchpadView.swift"
+    write("NotchCompact.swift", "import AppKit\nimport SwiftUI\nextension NotchCompactTests {\n"
+          + declaration("Sources/Vorssaint/UI/Notch/NotchComponents.swift", "struct NotchRail<")
+          + declaration("Sources/Vorssaint/UI/PlainTextEditor.swift", "struct PlainTextEditor:")
+          + declaration(scratchpad_view, "struct NotchScratchpadView:")
+          + "}\nextension NotchCompactTests.ScratchpadService {\n"
+          + declaration(scratchpad_service, "    func clear(")
+          + "}\nextension NotchCompactTests.Floating {\n"
+          + declaration(scratchpad_service, "    private func focusText(").replace("private func", "func", 1)
+          + "}\nextension NotchCompactTests.Embedded {\n"
+          + declaration(scratchpad_view, "    private func focusEditor(").replace("private func", "func", 1)
+          + "}\nextension NotchCompactTests.Page {\n"
+          + declaration("Sources/Vorssaint/UI/Notch/NotchView.swift", "    private var pageSize:")
+              .replace("private var", "var", 1).replace("NotchSupport.controls()", "controls")
+              .replace("NotchTimerService.shared", "NotchCompactTests.NotchTimerService.shared")
+          + "}\n")
     update = "Sources/Vorssaint/Services/Update/UpdateService.swift"
     update_view = "Sources/Vorssaint/UI/Notch/NotchUpdateControl.swift"
     write("NotchUpdate.swift", "import AppKit\nimport SwiftUI\nimport Combine\nextension NotchUpdateTests {\n"
@@ -273,6 +310,8 @@ def main():
                                                 "captureControls: captureControls != nil, in: ReviewDefaults.current)")
     music_visibility = music_visibility.replace("AppFeature.monitorDisk.isAvailable",
                                                 "AppFeature.monitorDisk.isAvailable(in: ReviewDefaults.current)")
+    music_visibility = music_visibility.replace("AppFeature.fanControl.isAvailable",
+                                                "AppFeature.fanControl.isAvailable(in: ReviewDefaults.current)")
     write("NotchMusicVisibility.swift", "import Foundation\nextension NotchMusicVisibilityTests {\n"
           + "final class Service: State {\n" + music_visibility + "}\n}\n")
     write("NotchScreenEdgeClicks.swift", "import AppKit\nextension NotchScreenEdgeClickTests {\nfinal class Service: State {\n"
@@ -289,6 +328,7 @@ def main():
           + declaration(notch, "    private func stopMenuSpaceMonitoring()")
           + declaration(notch, "    private func syncMenuSpaceMonitoring()").replace("private func", "func", 1)
               .replace("AXIsProcessTrusted()", "accessibilityGranted")
+              .replace("NotchSupport.coversMenus()", "coversMenus")
           + "}\n}\n")
     write("NotchPresentationRefresh.swift", "import Foundation\nimport Combine\n"
           + "extension NotchPresentationRefreshContract {\nfinal class Service: State {\n"
@@ -404,10 +444,10 @@ def main():
           + "var iconRowContentWidth: CGFloat { switcher.iconRowLayout.contentWidth(simpleMode: true, windowRow: false) }\n"
           + "var body: some View {\nif selectedWindow != nil {\nlet appWindows = selectedAppWindows\n"
           + "if switcher.simple {\nGroup {\n"
-          + declaration(switcher, "                ScrollViewReader { proxy in")
+           + declaration(switcher, "                ScrollViewReader { proxy in")
           + "}\n.frame(width: iconRowContentWidth - 2 * SwitcherIconRowLayout.simpleTitlePanelPadding, "
           + "height: 25 * SwitcherIconRowLayout.scale)\n} else {\n"
-          + declaration(switcher, "                    ScrollViewReader { proxy in")
+           + declaration(switcher, "                    ScrollViewReader { proxy in")
           + "}\n}\n}\n"
           + declaration(switcher, "    private var selectedWindow:")
           + declaration(switcher, "    private var selectedAppWindows:")
@@ -586,6 +626,13 @@ def main():
           + "}\n}\n")
 
     keep_awake = "Sources/Vorssaint/Services/KeepAwakeManager.swift"
+    write("KeepAwakeLidSleep.swift", "import Foundation\n\nextension KeepAwakeLidSleepContract {\n"
+          + "final class Service {\nvar isActive = false\nvar sessionPausedForScreenLock = false\n"
+          + "var clamshellActive = false\n"
+          + "static func lidSleepIsAllowed() -> Bool { KeepAwakeAutomationSupport.lidSleepIsAllowed("
+          + "systemAllowsSleep: policy, assertions: assertions) }\n"
+          + declaration(keep_awake, "    private func sleepIfLidAlreadyClosed(").replace("private func", "func", 1)
+          + "}\n}\n")
     write("KeepAwakeTimerHandoff.swift", "import Foundation\n\nextension KeepAwakeTimerHandoffContract {\n"
           + "final class Service {\nvar sessionTrigger = SessionTrigger.manual\n"
           + "var automationSuppressedUntilConditionsClear = false\n"
@@ -631,6 +678,16 @@ def main():
           + "static let factories: [(String, (AppLanguage) -> Any)] = [\n"
           + "".join(f'("{name}", {{ FeatureStrings.{name}($0) }}),\n' for name in factories)
           + "]\n}\n")
+
+    # Same-file extensions can exercise the private AppKit content view without
+    # widening the production interface or presenting an application window.
+    hud = "Sources/Vorssaint/UI/QuitProtection/QuitProtectionHUD.swift"
+    checks = "Tests/Fixtures/QuitProtectionHUDChecks.swift"
+    write("QuitProtectionHUDBodies.swift",
+          f'#sourceLocation(file: {json.dumps(hud)}, line: 1)\n'
+          + (ROOT / hud).read_text() + "\n"
+          + f'#sourceLocation(file: {json.dumps(checks)}, line: 1)\n'
+          + (ROOT / checks).read_text() + "\n#sourceLocation()\n")
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ struct NotchLayoutEditor: View {
                                 .allowsHitTesting(false)
                         }
                     }
-                    islandPreview
+                    islandPreview(height: frame.height)
                         .frame(width: frame.width, height: frame.height)
                         .background { NotchShape(attached: true, radius: 22).fill(.black) }
                         .position(x: frame.midX, y: frame.midY)
@@ -88,35 +88,42 @@ struct NotchLayoutEditor: View {
                         .frame(width: 22, height: 22).background(.white.opacity(0.17), in: Circle())
                         .contentShape(Circle())
                         .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("island.editor")).onChanged { value in
-                            if resizeStart == nil { resizeStart = CGSize(width: actualWidth, height: NotchSize.clamped(height, to: NotchSize.heightRange, fallback: NotchSize.defaultHeight)) }
+                            if resizeStart == nil { resizeStart = CGSize(width: actualWidth, height: actualHeight) }
                             guard let start = resizeStart else { return }
                             size = NotchSize.custom.rawValue
-                            width = NotchSize.clamped(Double(start.width + value.translation.width / 0.6), to: NotchSize.widthRange, fallback: NotchSize.defaultWidth)
-                            height = NotchSize.clamped(Double(start.height + value.translation.height / 0.35), to: NotchSize.heightRange, fallback: NotchSize.defaultHeight)
+                            width = NotchSize.clamped(Double(start.width + value.translation.width / Self.previewScale), to: NotchSize.widthRange, fallback: NotchSize.defaultWidth)
+                            height = NotchSize.clamped(Double(start.height + value.translation.height / Self.previewScale), to: NotchSize.heightRange, fallback: NotchSize.defaultHeight)
                         }.onEnded { _ in resizeStart = nil })
                         .position(x: frame.maxX - NotchLayout.shoulder - 17, y: frame.maxY - 17)
                         .accessibilityLabel(text.size)
                 }
                 .coordinateSpace(name: "island.editor")
             }
-            .frame(height: 292)
+            .frame(height: Self.canvasHeight)
             .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: configuration)
             Text(editor.layoutHint).font(.callout).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
+    /// The preview keeps the island's real proportions at half size, so the
+    /// canvas fits the tallest custom island with its bottom drop zone below.
+    private static let previewScale: CGFloat = 0.5
+    private static let canvasHeight: CGFloat = NotchSize.heightRange.upperBound * previewScale + 20 + 58 + 2
+    /// Below this the preview shows only the title and the two cards: the
+    /// Content capsule would otherwise leave the black silhouette.
+    private static let fullPreviewHeight: CGFloat = 166
+    private var layout: NotchSize { NotchSize(rawValue: size) ?? .compact }
     private var actualWidth: CGFloat {
-        switch NotchSize(rawValue: size) ?? .compact {
-        case .compact: return 480
-        case .spacious: return 560
-        case .custom: return NotchSize.clamped(width, to: NotchSize.widthRange, fallback: NotchSize.defaultWidth)
-        }
+        NotchLayout.preferredWidth(layout, custom: NotchSize.clamped(width, to: NotchSize.widthRange, fallback: NotchSize.defaultWidth))
+    }
+    private var actualHeight: CGFloat {
+        NotchLayout.nominalHeight(layout, custom: NotchSize.clamped(height, to: NotchSize.heightRange, fallback: NotchSize.defaultHeight))
     }
 
     private func islandFrame(in canvas: CGSize) -> CGRect {
-        let w = min(canvas.width - 112, actualWidth * 0.6)
-        let h = min(210, max(150, NotchSize.clamped(height, to: NotchSize.heightRange, fallback: NotchSize.defaultHeight) * 0.35))
+        let w = min(canvas.width - 112, actualWidth * Self.previewScale)
+        let h = actualHeight * Self.previewScale
         return CGRect(x: (canvas.width - w) / 2, y: 20, width: w, height: h)
     }
 
@@ -199,7 +206,7 @@ struct NotchLayoutEditor: View {
         configuration.buttons.swapAt(from, to)
     }
 
-    private var islandPreview: some View {
+    private func islandPreview(height: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(text.controls).font(.system(size: 12, weight: .semibold))
             Button(action: editContents) {
@@ -213,12 +220,14 @@ struct NotchLayoutEditor: View {
                     }
                 }
             }.buttonStyle(.plain)
-            Button(action: editContents) {
-                Label(editor.content, systemImage: "square.grid.2x2")
-                    .font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.8))
-                    .frame(maxWidth: .infinity).padding(8)
-                    .background(.white.opacity(0.06), in: Capsule())
-            }.buttonStyle(.plain)
+            if height >= Self.fullPreviewHeight {
+                Button(action: editContents) {
+                    Label(editor.content, systemImage: "square.grid.2x2")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.8))
+                        .frame(maxWidth: .infinity).padding(8)
+                        .background(.white.opacity(0.06), in: Capsule())
+                }.buttonStyle(.plain)
+            }
             Spacer(minLength: 0)
         }.padding(.horizontal, 22).padding(.top, 24).padding(.bottom, 12).foregroundStyle(.white)
     }
