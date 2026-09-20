@@ -474,13 +474,20 @@ final class CommandBarService: ObservableObject {
     /// missing record would strand the typist on the borrowed layout.
     private var suspendedInputSourceID: String?
 
+    var hasBorrowedInputSource: Bool {
+        suspendedInputSourceID != nil
+    }
+
     /// One-shot switch to the first enabled ASCII layout, read fresh on every
     /// open like every other preference on this path. TIS talks to the
     /// text-input server from the main thread, the way the Super key switch
     /// already does.
     private func adoptASCIIInputSource() {
         let apply = {
-            guard UserDefaults.standard.bool(forKey: DefaultsKey.commandBarASCIILayoutEnabled) else { return }
+            guard UserDefaults.standard.bool(forKey: DefaultsKey.commandBarASCIILayoutEnabled) else {
+                self.restoreSuspendedInputSource()
+                return
+            }
             let currentID = InputSourceSelection.currentSourceID()
             guard let target = InputSourceSelection.asciiLayoutID(
                 currentID: currentID,
@@ -502,20 +509,28 @@ final class CommandBarService: ObservableObject {
 
     private func restoreSuspendedInputSource() {
         guard let sourceID = suspendedInputSourceID else { return }
-        suspendedInputSourceID = nil
         // The switch waits for the next turn of the main loop. A close reached
         // through a key (Esc, Return, ⌘,) runs inside that key event's own
         // dispatch, and TIS quietly ignores a source switch asked for there —
         // the same hide() restores fine from a click or the hotkey, which
         // stand outside any key event. Waiting is safe: the presentation id
         // is captured now, and beginPresentation replaces it on the next
-        // open, so a bar reopened before this block lands has already
-        // borrowed its own layout and a stale restore stands down.
+        // open. Keep the original source until restoration actually runs:
+        // reopening while ASCII is still active borrows the same source.
         let presentationID = self.presentationID
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.presentationID == presentationID else { return }
-            _ = InputSourceSelection.select(sourceID: sourceID)
+            guard let self, self.presentationID == presentationID,
+                  self.suspendedInputSourceID == sourceID else { return }
+            self.restoreBorrowedInputSource()
         }
+    }
+
+    /// The termination path cannot wait for another main-loop turn. Keep a
+    /// refused restoration pending so a later close or termination can retry.
+    func restoreBorrowedInputSource() {
+        guard let sourceID = suspendedInputSourceID,
+              InputSourceSelection.select(sourceID: sourceID) else { return }
+        suspendedInputSourceID = nil
     }
 
     /// Re-fits the panel to its content as the result list grows and

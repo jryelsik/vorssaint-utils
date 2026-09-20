@@ -12,6 +12,7 @@ struct SwitcherSettings: View {
     @ObservedObject private var permissions = Permissions.shared
     @ObservedObject private var dockPreview = DockPreviewService.shared
     @AppStorage(DefaultsKey.switcherEnabled) private var switcherEnabled = true
+    @AppStorage(DefaultsKey.switcherShortcut) private var switcherShortcutStorage = GlobalShortcut.switcherDefault.storageValue
     @AppStorage(DefaultsKey.switcherTakeOverSystemShortcuts) private var switcherTakeOverSystemShortcuts = false
     @AppStorage(DefaultsKey.switcherIconRowMode) private var switcherIconRowMode = false
     @AppStorage(DefaultsKey.switcherSimpleMode) private var switcherSimpleMode = false
@@ -183,7 +184,7 @@ struct SwitcherSettings: View {
                         }
                 }
                 Text(String(format: l10n.s.switcherUsageHintFormat,
-                            GlobalShortcutRole.switcher.savedShortcut.displayString))
+                            (GlobalShortcut(storageValue: switcherShortcutStorage) ?? .switcherDefault).displayString))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -273,7 +274,9 @@ struct SwitcherSettings: View {
                          choices: [(String, String)]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             SettingsRow(symbol: symbol, title: title, caption: caption) { EmptyView() }
-            HStack(spacing: 8) {
+            // The three screen choices outgrow the card at the default window
+            // width in most languages; wrapping keeps every label whole.
+            FlowLayoutLite(spacing: 8) {
                 ForEach(choices, id: \.0) { value, label in
                     let selected = selection.wrappedValue == value
                     Button {

@@ -41,6 +41,13 @@ def availability_declaration(path, prefix):
 def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     panel = "Sources/Vorssaint/App/AppDelegate.swift"
+    write("PostUpdateStatusItemRecovery.swift", "import AppKit\nimport Foundation\n"
+          + "extension PostUpdateStatusItemRecoveryTests {\nfinal class Host: Fixture {\n"
+          + "".join(declaration(panel, prefix).replace("private ", "") for prefix in [
+              "    private func recoverStatusItemAfterUpdate(",
+              "    private func verifyPostUpdateStatusItem(",
+              "    private func iconIsOnScreen("])
+          + "}\n}\n")
     write("MenuPanelRecovery.swift", "import AppKit\nimport Foundation\n"
           + "extension MenuPanelRecoveryTests {\nfinal class Host: Fixture {\n"
           + "".join(declaration(panel, prefix).replace("private ", "") for prefix in [
@@ -76,6 +83,53 @@ def main():
           + "}\nextension SwitcherActivationTests.Bridge {\n"
           + declaration("Sources/Vorssaint/Services/Switcher/SpaceWindowBridge.swift",
                         "    static func frontWindow(") + "}\n")
+    write("ScratchpadExport.swift", "import AppKit\nimport Foundation\n"
+          + "extension ScratchpadExportContract {\nfinal class Service: Fixture {\n"
+          + declaration("Sources/Vorssaint/Services/QuickTools/ScratchpadService.swift",
+                        "    func exportText(")
+          + "}\n}\n")
+    write("MusicLaunchBlockerLifecycle.swift", "import AppKit\nimport Foundation\n"
+          + "extension MusicLaunchBlockerContract {\nfinal class Service: Fixture {\n"
+          + "".join(declaration("Sources/Vorssaint/Services/Audio/MusicLaunchBlocker.swift", prefix)
+                    .replace("private ", "", 1) for prefix in [
+                        "    func syncWithPreferences(", "    private func start(", "    func stop(",
+                        "    private func handleLaunch(", "    private func handleMediaKeyEvent("])
+          + "}\n}\n")
+    write("NotchAudioLevelLifecycle.swift", "import Combine\nimport Foundation\n"
+          + "extension NotchAudioLevelLifecycleContract {\n"
+          + declaration("Sources/Vorssaint/Services/Notch/NotchAudioLevelService.swift",
+                        "final class NotchAudioLevelService:")
+          + "}\n")
+    clipboard = "Sources/Vorssaint/Services/Clipboard/ClipboardHistoryService.swift"
+    write("ClipboardPreview.swift", "import Foundation\nimport Combine\n"
+          + "extension ClipboardPreviewContract {\nfinal class Service: Fixture {\n"
+          + declaration(clipboard, "    @Published private(set) var entries:")
+          + declaration(clipboard, "    func updateText(")
+          + "".join(declaration(clipboard, prefix).replace("private ", "", 1) for prefix in [
+              "    func togglePin(", "    func copy(_ entry:", "    private func touch(",
+              "    private var firstRecentIndex:", "    private func normalizeEntryOrder("])
+          + "func setEntries(_ values: [ClipboardHistoryEntry]) { entries = values }\n"
+          + "}\n}\n")
+    write("CommandBarInputSource.swift", "import Foundation\n"
+          + "extension CommandBarInputSourceContract {\nfinal class Service: Fixture {\n"
+          + "".join(declaration("Sources/Vorssaint/Services/CommandBar/CommandBarService.swift", prefix)
+                    .replace("private func", "func", 1) for prefix in [
+                        "    private func adoptASCIIInputSource(",
+                        "    private func restoreSuspendedInputSource(",
+                        "    func restoreBorrowedInputSource(",
+                        "    var hasBorrowedInputSource:"])
+          + "}\n}\n")
+    write("CommandBarTermination.swift", "import AppKit\nimport Foundation\n"
+          + "extension CommandBarTerminationContract {\nfinal class Host: Fixture {\n"
+          + declaration("Sources/Vorssaint/App/AppDelegate.swift", "    func applicationShouldTerminate(")
+          + "}\n}\n")
+    ports = "Sources/Vorssaint/Services/PortManager/PortManagerService.swift"
+    write("PortManagerRefresh.swift", "import Darwin\nimport Foundation\n"
+          + "extension PortManagerRefreshTests {\nfinal class Service: Fixture {\n"
+          + declaration(ports, "    func refresh(")
+          + declaration(ports, "    private static func snapshot(").replace("private static", "static", 1)
+          + declaration(ports, "    private static func startTimes(").replace("private static", "static", 1)
+          + "}\n}\n")
     uninstall = "Sources/Vorssaint/Services/Uninstall/AppUninstaller.swift"
     bar = "Sources/Vorssaint/Services/CommandBar/CommandBarService.swift"
     write("CommandBarEmojiBodies.swift", "import Foundation\n"
@@ -431,10 +485,10 @@ def main():
           + "var iconRowContentWidth: CGFloat { switcher.iconRowLayout.contentWidth(simpleMode: true, windowRow: false) }\n"
           + "var body: some View {\nif selectedWindow != nil {\nlet appWindows = selectedAppWindows\n"
           + "if switcher.simple {\nGroup {\n"
-           + declaration(switcher, "                ScrollViewReader { proxy in")
+          + declaration(switcher, "                ScrollViewReader { proxy in")
           + "}\n.frame(width: iconRowContentWidth - 2 * SwitcherIconRowLayout.simpleTitlePanelPadding, "
           + "height: 25 * SwitcherIconRowLayout.scale)\n} else {\n"
-           + declaration(switcher, "                    ScrollViewReader { proxy in")
+          + declaration(switcher, "                    ScrollViewReader { proxy in")
           + "}\n}\n}\n"
           + declaration(switcher, "    private var selectedWindow:")
           + declaration(switcher, "    private var selectedAppWindows:")
@@ -613,13 +667,48 @@ def main():
           + "}\n}\n")
 
     keep_awake = "Sources/Vorssaint/Services/KeepAwakeManager.swift"
+    keep_awake_methods = [
+        "    func refreshPasswordlessStatus(",
+        "    private func activate(end:",
+        "    func deactivate(reason:",
+        "    private func applyClamshellPreference(",
+        "    private func prepareClamshellPreference(",
+        "    private func finishClamshellSetup(",
+        "    private func markClamshellSetupFailed(",
+        "    private func enableClamshell(",
+        "    private func disableClamshell(",
+        "    private func sleepIfLidAlreadyClosed(",
+        "    func recoverIfNeeded(",
+        "    private func finishRecovery(",
+        "    private var clamshellNeedsRestore:",
+        "    private func finishClamshellRestore(",
+    ]
     write("KeepAwakeLidSleep.swift", "import Foundation\n\nextension KeepAwakeLidSleepContract {\n"
-          + "final class Service {\nvar isActive = false\nvar sessionPausedForScreenLock = false\n"
-          + "var clamshellActive = false\n"
+          + "final class Service {\n"
+          + "var isActive = false\nvar sessionPausedForScreenLock = false\nvar clamshellActive = false\n"
+          + "var isTerminating = false\nvar clamshellEnablePending = false\nvar clamshellRestorePending = false\n"
+          + "var clamshellOperationGeneration = 0\nvar clamshellSetupID: UUID?\n"
+          + "var lidSleepGeneration = 0\nvar lidSleepAttemptsRemaining = 0\n"
+          + "var clamshellSetupInProgress = false\nvar clamshellSetupFailed = false\n"
+          + "var clamshellSetupRetried = false\nvar passwordlessClamshell = true\n"
+          + "var recoveryCompleted = false\nvar screenLocked = false\nvar assertionsHeld = false\n"
+          + "var endTimer: Timer?\nvar endDate: Date?\nvar sessionTrigger: SessionTrigger?\n"
+          + "var activeAutomationConditions = Set<KeepAwakeAutomationCondition>()\n"
+          + "var onSessionEnded: ((EndReason) -> Void)?\n"
+          + declaration(keep_awake, "    @Published var clamshellPreferred:").replace("@Published ", "", 1)
+          + "init() { clamshellPreferred = true }\n"
+          + "func syncScreenLockMonitoring() {}\nfunc applyAssertions() { assertionsHeld = true }\n"
+          + "func releaseAssertions() { assertionsHeld = false }\nfunc scheduleEnd(at date: Date) {}\n"
+          + "func startBatteryWatch() {}\nfunc stopBatteryWatch() {}\nfunc syncMouseJiggleTimer() {}\n"
+          + "func stopMouseJiggleTimer() {}\nfunc stopAutomationMonitoring() {}\nfunc syncWithPreferences() {}\n"
           + "static func lidSleepIsAllowed() -> Bool { KeepAwakeAutomationSupport.lidSleepIsAllowed("
           + "systemAllowsSleep: policy, assertions: assertions) }\n"
-          + declaration(keep_awake, "    private func sleepIfLidAlreadyClosed(").replace("private func", "func", 1)
-          + "}\n}\n")
+          + "".join(declaration(keep_awake, prefix).replace("private ", "", 1) for prefix in keep_awake_methods)
+          + "}\n}\n"
+          + "extension KeepAwakeLidSleepContract.Sudoers {\n"
+          + declaration("Sources/Vorssaint/Services/ShellSupport.swift", "    static func isConfigured()")
+          + declaration("Sources/Vorssaint/Services/ShellSupport.swift", "    static func restoreSleepWithAuthorization(")
+          + "}\n")
     write("KeepAwakeTimerHandoff.swift", "import Foundation\n\nextension KeepAwakeTimerHandoffContract {\n"
           + "final class Service {\nvar sessionTrigger = SessionTrigger.manual\n"
           + "var automationSuppressedUntilConditionsClear = false\n"
