@@ -501,11 +501,6 @@ enum MenuBarRenderer {
                 items.append(MetricItem(metric: metric,
                                         segments: [.symbol(metric.symbolName), .text(" \(count)")],
                                         width: reservedWidth(for: metric, preset: preset)))
-            case .connectedDevices:
-                let count = snapshot.connectedDevices.count
-                items.append(MetricItem(metric: metric,
-                                        segments: [.symbol(metric.symbolName), .text(" \(count)")],
-                                        width: reservedWidth(for: metric, preset: preset)))
             case .battery:
                 if let charge = snapshot.power?.chargePercent {
                     let symbol = (snapshot.power?.isCharging ?? false) ? "battery.100.bolt" : metric.symbolName
@@ -737,13 +732,6 @@ enum MenuBarRenderer {
                 groups.append([.metricBlock(label: "EXT",
                                             value: "\(count)",
                                             minimumValue: "0",
-                                            style: style,
-                                            pressure: nil)])
-            case .connectedDevices:
-                let count = snapshot.connectedDevices.count
-                groups.append([.metricBlock(label: FeatureStrings.connectedDevices(L10n.shared.language).menuBarLabel,
-                                            value: "\(count)",
-                                            minimumValue: "99",
                                             style: style,
                                             pressure: nil)])
             case .battery, .batteryTemperature:

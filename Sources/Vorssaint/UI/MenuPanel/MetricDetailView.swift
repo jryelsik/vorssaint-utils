@@ -566,8 +566,6 @@ struct MetricDetailView: View {
             return PanelMetricColor.orange(for: colorScheme)
         case .fan, .connectedDevices:
             return PanelMetricColor.cyan(for: colorScheme)
-        case .usb:
-            return .accentColor
         }
     }
 
