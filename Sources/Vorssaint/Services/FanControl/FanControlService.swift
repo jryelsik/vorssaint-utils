@@ -61,10 +61,6 @@ final class FanControlService: ObservableObject {
 
     func syncWithPreferences() {
         if AppFeature.fanControl.isAvailable {
-            refreshAccessState()
-            if accessState == .enabled {
-                _ = replaceRegistrationIfNeeded()
-            }
             if UserDefaults.standard.bool(forKey: DefaultsKey.fanControlRecoveryNeeded) {
                 restoreAutomatic()
             }

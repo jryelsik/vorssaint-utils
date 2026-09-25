@@ -362,7 +362,6 @@ enum DefaultsKey {
     static let menuBarConnectedDevices = "menuBarConnectedDevices"
     static let menuBarPower = "menuBarPower"
     static let menuBarFanSpeed = "menuBarFanSpeed"
-    static let menuBarConnectedDevices = "menuBarConnectedDevices"
     static let menuBarDiskCount = "menuBarDiskCount"
     static let menuBarPreset = "menuBarPreset"           // dense
     static let menuBarMetricSpacing = "menuBarMetricSpacing" // standard | compact
