@@ -1050,7 +1050,7 @@ final class AppSwitcher: ObservableObject {
         if pending.commitWhenReady {
             commitSession()
         } else if capturesPreviews {
-            WindowPreviewProvider.shared.refreshPreviews(for: list, maxPixelSize: 640 * PreviewSizing.scale) { [weak self] windowID, image in
+            WindowPreviewProvider.shared.refreshPreviews(for: list, maxPixelSize: 640 * PreviewSizing.switcherScale) { [weak self] windowID, image in
                 guard let self,
                       self.sessionActive,
                       self.sessionItems.contains(where: { $0.previewWindowID == windowID }) else { return }
@@ -1139,7 +1139,7 @@ final class AppSwitcher: ObservableObject {
     /// and Accessibility to report it: a flick of the shortcut is faster than
     /// either, and it is exactly the moment the toggle has to be right.
     private func recordUse(_ activated: SwitcherItem, previous: CGWindowID?) {
-        WindowUseTracker.shared.recordSwitch(to: activated.windowID, from: previous)
+        WindowUseTracker.shared.recordSwitch(to: activated.windowID, pid: activated.pid, from: previous)
     }
 
     func select(index: Int) {
@@ -1543,6 +1543,9 @@ final class AppSwitcher: ObservableObject {
                                                        closingItemIDs: closingItemIDs)
             .flatMap { id in windows.first { $0.id == id } }
         let source = sessionSourceContext
+        // A session can open without a source item (the app in front has no
+        // window left); the app in front still keeps the settling retry.
+        let handoffSourcePID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let previousWindowID = sessionStartWindowID
         endSession()
         if let selection {
@@ -1550,6 +1553,7 @@ final class AppSwitcher: ObservableObject {
             WindowActivator.activate(selection,
                                      sourceWasFullscreen: source?.isFullscreen ?? false,
                                      sourcePID: source?.pid,
+                                     handoffSourcePID: handoffSourcePID,
                                      sourceWindowID: source?.isFullscreen == true ? nil : source?.windowID,
                                      sourceWindowOwnerPID: source?.windowOwnerPID)
         }
@@ -1934,10 +1938,10 @@ final class AppSwitcher: ObservableObject {
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
 
-        let panel = NSPanel(contentRect: .zero,
-                            styleMask: [.borderless, .nonactivatingPanel],
-                            backing: .buffered,
-                            defer: false)
+        let panel = OverlayPanel(contentRect: .zero,
+                                 styleMask: [.borderless, .nonactivatingPanel],
+                                 backing: .buffered,
+                                 defer: false)
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -1964,8 +1968,8 @@ struct SwitcherGrid: Equatable {
     // keeps the panel from spending that saved space on empty gaps.
     static var cardWidth: CGFloat { SwitcherGridCard.width }
     static var cardHeight: CGFloat { SwitcherGridCard.height }
-    static var spacing: CGFloat { 12 * PreviewSizing.scale }
-    static var padding: CGFloat { 20 * PreviewSizing.scale }
+    static var spacing: CGFloat { 12 * PreviewSizing.switcherScale }
+    static var padding: CGFloat { 20 * PreviewSizing.switcherScale }
 
     static let empty = SwitcherGrid(columns: 1, rows: 1, visibleRows: 1, panelSize: .zero)
 

@@ -209,7 +209,7 @@ struct MonitorPanelConfig: View {
                 Toggle(l10n.s.monitorItemDiskTools, isOn: $diskTools)
             }
         }
-        if AppFeature.monitorUSB.isAvailable {
+        if AppFeature.connectedDevices.isAvailable {
             block(.usb, title: l10n.s.usbSection, master: $showUSB) {
                 Toggle(l10n.s.usbShowTechDetails, isOn: $usbTechDetails)
                 Toggle(l10n.s.usbShowEthernet, isOn: $usbShowEthernet)

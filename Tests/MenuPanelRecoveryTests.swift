@@ -52,6 +52,7 @@ enum MenuPanelRecoveryTests {
         func convert(_ rect: CGRect, to: Any?) -> CGRect { rect }
     }
     final class Popover {
+        var animates = true
         var isShown = false
         var contentViewController: Controller? = Controller()
         var fails = false
@@ -91,7 +92,9 @@ enum MenuPanelRecoveryTests {
         static var shared = MenuPanelFocus()
         var activeMetric: String? = "network"
         var switching = false
+        var popoverIsVisible = false
         func setSwitchingMetricAnchor(_ value: Bool) { switching = value }
+        func setPopoverVisible(_ value: Bool) { popoverIsVisible = value }
         func clearMetricFocus() { activeMetric = nil }
     }
     enum Needs { case none, network }
@@ -112,6 +115,9 @@ enum MenuPanelRecoveryTests {
         var viewKeepsPopoverOpen = false
         var isPresentingPopoverModal = false
         var anchorScreen: NSScreen?
+        var preventsPopoverDismissal: Bool {
+            viewKeepsPopoverOpen || isPresentingPopoverModal
+        }
     }
     enum StatusItemAnchorSupport {
         static func anchorDriftX(clickX: Double, reportedMidX: Double, buttonWidth: Double) -> Double? {
@@ -133,7 +139,9 @@ enum MenuPanelRecoveryTests {
         let popover = Popover()
         let statusController = StatusController()
         var popoverIsClosing = false
+        var popoverCloseIsAppRequested = false
         var popoverIsSwitchingAnchor = false
+        var settingsWindow: NSWindow?
         var isTerminating = false
         var popoverLastFrame: CGRect?
         var popoverLastWindowNumber: Int?
@@ -176,11 +184,14 @@ enum MenuPanelRecoveryTests {
                 host.lastStatusClick = (700, Date())
             }
             host.showPopover(animate: false, activate: false)
+            expect(MenuPanelFocus.shared.popoverIsVisible == host.popover.isShown,
+                   "panel presentation follows the actual show result")
             NSApp.currentEvent = event()
             return host
         }
         func close(_ host: Host) {
             host.popover.isShown = false
+            host.popoverWillClose(Notification(name: Notification.Name("willClose")))
             host.popoverDidClose(Notification(name: Notification.Name("closed")))
         }
         for corrected in [false, true] {
@@ -190,6 +201,8 @@ enum MenuPanelRecoveryTests {
             close(host)
             expect(host.popover.isShown && host.popoverLastFrame?.midX == 700,
                    "fresh panel click recovers at its existing anchor even after the opening click expires")
+            expect(MenuPanelFocus.shared.popoverIsVisible,
+                   "panel content stays active after a successful anchor recovery")
             expect(MenuPanelFocus.shared.activeMetric == "network" && SystemMonitor.shared.needs == .network,
                    "recovery preserves metric focus and sampling")
             DispatchQueue.main.drain()
@@ -197,13 +210,15 @@ enum MenuPanelRecoveryTests {
             close(host); DispatchQueue.main.drain()
             expect(!host.popover.isShown && SystemMonitor.shared.needs == .none && !host.statusController.held,
                    "immediate second close stays closed and releases resources")
+            expect(!MenuPanelFocus.shared.popoverIsVisible,
+                   "closed panel content stops observing live section updates")
         }
         for kind in ["requested", "missing event", "other window", "old click", "future click", "outside",
                      "movement", "escape", "key release", "modifier", "no frame", "no window number",
                      "missing button", "missing window", "screen detached", "terminating", "switching"] {
             let host = setup()
             switch kind {
-            case "requested": host.popoverIsClosing = true
+            case "requested": host.popoverCloseIsAppRequested = true
             case "missing event": NSApp.currentEvent = nil
             case "other window": NSApp.currentEvent = event(window: 72)
             case "old click": NSApp.currentEvent = event(age: 1)
@@ -234,6 +249,8 @@ enum MenuPanelRecoveryTests {
             expect(!host.popover.isShown && !host.monitors && SystemMonitor.shared.needs == .none
                    && !host.statusController.held && host.popoverDriftObservers.isEmpty,
                    "failed presentation releases observers, sampling and held status badge")
+            expect(!MenuPanelFocus.shared.popoverIsVisible,
+                   "failed presentation leaves panel content inactive")
         }
         do {
             let host = setup(); close(host); close(host); DispatchQueue.main.drain()
@@ -245,8 +262,63 @@ enum MenuPanelRecoveryTests {
             let window = host.popover.contentViewController!.view.window!
             window.setFrame(CGRect(x: 600, y: 400, width: 332, height: 650), display: false)
             expect(host.popoverLastFrame == window.frame, "later movement refreshes the recovery frame")
-            host.popoverIsClosing = true; close(host)
+            host.popoverCloseIsAppRequested = true; close(host)
             expect(NotificationCenter.default.observers.isEmpty, "normal close leaves no geometry observer")
+        }
+        do {
+            let host = setup()
+            host.popoverWillClose(Notification(name: Notification.Name("willClose")))
+            expect(host.popoverIsClosing && !host.popoverCloseIsAppRequested,
+                   "popoverWillClose marks closing in progress without marking app requested")
+            host.popover.isShown = false
+            host.popoverDidClose(Notification(name: Notification.Name("didClose")))
+            expect(host.popover.isShown && !host.popoverIsClosing && !host.popoverCloseIsAppRequested,
+                   "system willClose followed by didClose allows panel recovery and clears closing flags")
+        }
+        do {
+            let host = setup()
+            host.popoverCloseIsAppRequested = true
+            host.popoverWillClose(Notification(name: Notification.Name("willClose")))
+            expect(host.popoverIsClosing && host.popoverCloseIsAppRequested,
+                   "app-requested close preserves app-requested flag through willClose")
+            host.popover.isShown = false
+            host.popoverDidClose(Notification(name: Notification.Name("didClose")))
+            expect(!host.popover.isShown && !host.popoverIsClosing && !host.popoverCloseIsAppRequested,
+                   "app-requested willClose followed by didClose stays closed without recovery")
+        }
+        do {
+            let host = setup()
+            let sideSettings = NSWindow(CGRect(x: 50, y: 100, width: 400, height: 400))
+            sideSettings.windowNumber = 88
+            host.settingsWindow = sideSettings
+            let sideEvent = event(window: 88)!
+            expect(!host.shouldDismissPopover(forLocalEvent: sideEvent),
+                   "side-by-side Settings window does not dismiss the live preview panel")
+
+            let overlappingSettings = NSWindow(CGRect(x: 500, y: 500, width: 400, height: 400))
+            overlappingSettings.windowNumber = 89
+            host.settingsWindow = overlappingSettings
+            let overlapEvent = event(window: 89)!
+            expect(host.shouldDismissPopover(forLocalEvent: overlapEvent),
+                   "overlapping Settings window dismisses the panel")
+
+            PanelInteractionState.shared.viewKeepsPopoverOpen = true
+            expect(!host.shouldDismissPopover(forLocalEvent: overlapEvent),
+                   "dismissal protection keeps panel open even when Settings window overlaps")
+            PanelInteractionState.shared.viewKeepsPopoverOpen = false
+
+            PanelInteractionState.shared.isPresentingPopoverModal = true
+            expect(!host.shouldDismissPopover(forLocalEvent: overlapEvent),
+                   "modal presentation keeps panel open even when Settings window overlaps")
+            PanelInteractionState.shared.isPresentingPopoverModal = false
+
+            let popoverEvent = event(window: 71)!
+            expect(!host.shouldDismissPopover(forLocalEvent: popoverEvent),
+                   "interaction with the panel itself does not dismiss the popover")
+
+            let unrelatedEvent = event(window: 99)!
+            expect(!host.shouldDismissPopover(forLocalEvent: unrelatedEvent),
+                   "interaction with unrelated window does not dismiss the popover")
         }
     }
 }

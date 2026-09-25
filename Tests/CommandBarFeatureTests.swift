@@ -12,9 +12,70 @@ import ImageIO
 import VMStatisticsCompat
 
 enum CommandBarFeatureTests {
+    /// Runs the production `copyAnswer` against a pasteboard that can refuse
+    /// the write and a HUD that records what it shows.
+    enum CopyAnswerHost {
+        final class Pasteboard {
+            enum Kind { case string }
+            static let general = Pasteboard()
+            var accepts = true
+            func clearContents() {}
+            func setString(_ value: String, forType: Kind) -> Bool { accepts }
+        }
+        typealias NSPasteboard = Pasteboard
+        final class Access {
+            static let shared = Access()
+            func async<T>(_ work: @escaping () -> T, then completion: @escaping (T) -> Void) { completion(work()) }
+        }
+        typealias GeneralPasteboardAccess = Access
+        enum HUD {
+            static var shown: [(icon: String, message: String)] = []
+            static func show(icon: String, message: String) { shown.append((icon, message)) }
+        }
+        typealias QuickToolHUD = HUD
+    }
+
+    /// Runs the production `applyBrightness` with two screens, one of which
+    /// the brightness service cannot drive, and records where it lands.
+    enum BrightnessHost {
+        struct Display { let id: CGDirectDisplayID }
+        final class Service {
+            static let shared = Service()
+            var displays = [Display(id: 1), Display(id: 2)]
+            var set: [CGDirectDisplayID] = []
+            var onRefresh: (() -> Void)?
+            func setBrightness(_ value: Double, for id: CGDirectDisplayID, showOSD: Bool) { set.append(id) }
+            func refresh() { onRefresh?() }
+        }
+        typealias BrightnessService = Service
+        final class Screen {
+            static let screens = [Screen(id: 2, x: 0), Screen(id: 3, x: 100)]
+            let frame: NSRect
+            let deviceDescription: [NSDeviceDescriptionKey: Any]
+            init(id: UInt32, x: CGFloat) {
+                frame = NSRect(x: x, y: 0, width: 100, height: 100)
+                deviceDescription = [NSDeviceDescriptionKey("NSScreenNumber"): NSNumber(value: id)]
+            }
+        }
+        typealias NSScreen = Screen
+        enum Event { static var mouseLocation = NSPoint.zero }
+        typealias NSEvent = Event
+        enum Sound {
+            static var beeps = 0
+            static func beep() { beeps += 1 }
+        }
+        typealias NSSound = Sound
+        final class Queue {
+            static let main = Queue()
+            func asyncAfter(deadline: DispatchTime, execute work: @escaping () -> Void) { work() }
+        }
+        typealias DispatchQueue = Queue
+    }
+
     static func run(_ suite: TestSuite) {
         CommandBarInputSourceContract.run(suite)
         CommandBarTerminationContract.run(suite)
+        CommandBarAppSortContract.run(suite)
         let isCodeLine: (String) -> Bool = {
             !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//")
         }
@@ -197,6 +258,43 @@ enum CommandBarFeatureTests {
                 && clipboardActionsCode.contains("confirmationPrompt: clipboard.clearRecent")
                 && clipboardActionsCode.contains("ClipboardHistoryService.shared.clearRecent()"),
                "the Command Bar clears only unpinned clipboard items after confirmation")
+        for accepts in [true, false] {
+            CopyAnswerHost.Pasteboard.general.accepts = accepts
+            CopyAnswerHost.HUD.shown = []
+            CopyAnswerHost.copyAnswer("42")
+            let shown = CopyAnswerHost.HUD.shown
+            suite.expect(accepts
+                    ? shown.map(\.icon) == ["doc.on.doc"] && shown.map(\.message) == ["42"]
+                    : shown.map(\.icon) == ["exclamationmark.circle"]
+                        && shown.map(\.message) == [FeatureStrings.commandBar(L10n.shared.language).copyFailed],
+                   "a copied answer shows the value only when the pasteboard took it, found \(shown)")
+        }
+        for (x, expected, beeps) in [(50.0, [CGDirectDisplayID(2)], 0), (150.0, [], 1)] {
+            BrightnessHost.Event.mouseLocation = NSPoint(x: x, y: 50)
+            BrightnessHost.Service.shared.set = []
+            BrightnessHost.Sound.beeps = 0
+            BrightnessHost.applyBrightness(percent: 40)
+            let set = BrightnessHost.Service.shared.set
+            suite.expect(set == expected && BrightnessHost.Sound.beeps == beeps,
+                   "brightness from the bar only reaches the display under the pointer, found \(set) and \(BrightnessHost.Sound.beeps) beeps")
+        }
+        // The refresh either finds the display the pointer was on, or the
+        // pointer has moved onto a listed display that must stay untouched.
+        for (refreshed, expected, beeps) in [
+            ({ BrightnessHost.Service.shared.displays.append(.init(id: 3)) }, [CGDirectDisplayID(3)], 0),
+            ({ BrightnessHost.Event.mouseLocation = NSPoint(x: 50, y: 50) }, [], 1),
+        ] as [(() -> Void, [CGDirectDisplayID], Int)] {
+            BrightnessHost.Event.mouseLocation = NSPoint(x: 150, y: 50)
+            BrightnessHost.Service.shared.displays = [.init(id: 1), .init(id: 2)]
+            BrightnessHost.Service.shared.set = []
+            BrightnessHost.Service.shared.onRefresh = refreshed
+            BrightnessHost.Sound.beeps = 0
+            BrightnessHost.applyBrightness(percent: 40)
+            let set = BrightnessHost.Service.shared.set
+            suite.expect(set == expected && BrightnessHost.Sound.beeps == beeps,
+                   "the retry after a refresh looks for the display the command started on, found \(set) and \(BrightnessHost.Sound.beeps) beeps")
+        }
+        BrightnessHost.Service.shared.onRefresh = nil
 
         // MARK: Compact mode, what an empty field shows
         suite.expect(CommandBarHome.showsBrowseList(compact: false, hasCategory: false, isPeeking: false),
@@ -1363,6 +1461,33 @@ enum CommandBarFeatureTests {
                "nothing is dropped for a script that did not match, or for a non-script link")
         suite.expect(CommandBarLinks.matchingScriptLink(in: scriptLinks, query: "a 100 usd eur") == nil,
                "a non-script link never matches, even with an argument")
+
+        // A script marked to run directly answers to its own global shortcut
+        // with nothing on screen; everything else falls back to opening the
+        // bar the way it always has.
+        suite.expect(!CommandBarLink(name: "h", kind: .script, destination: "/tmp/h").runsDirectly,
+               "a script stays a bar row unless the person marks it to run directly")
+        let directScript = CommandBarLink(name: "h", kind: .script, destination: "/tmp/h",
+                                          runsDirectly: true)
+        suite.expect(CommandBarLinks.directRunScript(
+                forStableKey: "link.\(directScript.id.uuidString)", in: [directScript]) != nil,
+               "a marked script is found by its own row's key")
+        suite.expect(CommandBarLinks.directRunScript(
+                forStableKey: "link.\(scriptLinks[1].id.uuidString)", in: scriptLinks) == nil,
+               "an unmarked script still opens the bar")
+        suite.expect(CommandBarLinks.directRunScript(forStableKey: "kill.browse",
+                                                     in: [directScript]) == nil
+                && CommandBarLinks.directRunScript(
+                    forStableKey: "link.00000000-0000-0000-0000-000000000000",
+                    in: [directScript]) == nil,
+               "a key that is not a saved link's row answers nil, whichever shape it has")
+        let saved = try? JSONDecoder().decode([CommandBarLink].self,
+                                              from: JSONEncoder().encode([directScript]))
+        suite.expect(saved?.first?.runsDirectly == true,
+               "the direct-run mark survives a save")
+        let legacy = try? JSONDecoder().decode(CommandBarLink.self, from: Data("{}".utf8))
+        suite.expect(legacy?.runsDirectly == false,
+               "a shortcut saved before the mark existed still loads, unmarked")
         let overlappingScripts = [
             CommandBarLink(name: "run", kind: .script, destination: "/tmp/short"),
             CommandBarLink(name: "run report", kind: .script, destination: "/tmp/specific"),
@@ -1494,14 +1619,6 @@ enum CommandBarFeatureTests {
                 == ["emoji.grin", "emoji.fire", "emoji.wave"],
                "an unlearned category preserves its useful catalog order")
 
-        let officialHabitService = CommandBarQueryHabits.installationKeyService(
-            bundleID: "com.vorssaint.utils")
-        let developerHabitService = CommandBarQueryHabits.installationKeyService(
-            bundleID: "com.vorssaint.utils.dev")
-        suite.expect(officialHabitService == "com.vorssaint.utils.command-bar-query-habits"
-                && officialHabitService != developerHabitService,
-               "uninstalling one app variant cannot target the other variant's query key")
-
         let habitKey = Data(repeating: 0x31, count: 32)
         let otherHabitKey = Data(repeating: 0x72, count: 32)
         for shortQuery in ["w", "wa"] {
@@ -1618,141 +1735,17 @@ enum CommandBarFeatureTests {
         suite.expect(habitStoreCache.store == queryHabits,
                "reloading preferences replaces the decoded store with persisted learning")
 
-        let persistedHabitKey = Data(repeating: 0x44, count: 32)
-        var keyReads: [(OSStatus, Data?)] = [(errSecSuccess, persistedHabitKey)]
-        var generatedKeyCount = 0
-        var addedKeyCount = 0
-        var updatedKeyCount = 0
-        func habitKeyStore() -> CommandBarQueryHabitKeyStore {
-            CommandBarQueryHabitKeyStore(
-                read: { keyReads.removeFirst() },
-                randomKey: {
-                    generatedKeyCount += 1
-                    return persistedHabitKey
-                },
-                add: { _ in addedKeyCount += 1; return errSecSuccess },
-                update: { _ in updatedKeyCount += 1; return errSecSuccess })
-        }
-        suite.expect(CommandBarQueryHabits.loadInstallationKey(using: habitKeyStore())
-                == persistedHabitKey
-                && generatedKeyCount == 0 && addedKeyCount == 0 && updatedKeyCount == 0,
-               "a valid stored query key is used without mutation")
-
-        keyReads = [(errSecInteractionNotAllowed, nil)]
-        suite.expect(CommandBarQueryHabits.loadInstallationKey(using: habitKeyStore()) == nil
-                && generatedKeyCount == 0,
-               "a transient Keychain read error never creates an ephemeral query key")
-
-        keyReads = [(errSecItemNotFound, nil), (errSecSuccess, persistedHabitKey)]
-        suite.expect(CommandBarQueryHabits.loadInstallationKey(using: habitKeyStore())
-                == persistedHabitKey && generatedKeyCount == 1 && addedKeyCount == 1,
-               "a new query key is published only after successful read-back")
-
-        keyReads = [(errSecItemNotFound, nil), (errSecSuccess, persistedHabitKey)]
-        let duplicateStore = CommandBarQueryHabitKeyStore(
-            read: { keyReads.removeFirst() },
-            randomKey: { Data(repeating: 0x55, count: 32) },
-            add: { _ in errSecDuplicateItem },
-            update: { _ in errSecInternalError })
-        suite.expect(CommandBarQueryHabits.loadInstallationKey(using: duplicateStore)
-                == persistedHabitKey,
-               "a duplicate-item race uses the other writer's persisted query key")
-
-        keyReads = [(errSecSuccess, Data([0x01]))]
-        let failedRepairStore = CommandBarQueryHabitKeyStore(
-            read: { keyReads.removeFirst() },
-            randomKey: { persistedHabitKey },
-            add: { _ in errSecInternalError },
-            update: { _ in errSecInteractionNotAllowed })
-        suite.expect(CommandBarQueryHabits.loadInstallationKey(using: failedRepairStore) == nil,
-               "a malformed query key is not replaced or published when repair fails")
-
-        keyReads = [(errSecSuccess, Data([0x01])), (errSecSuccess, persistedHabitKey)]
-        let repairedStore = CommandBarQueryHabitKeyStore(
-            read: { keyReads.removeFirst() },
-            randomKey: { persistedHabitKey },
-            add: { _ in errSecInternalError },
-            update: { _ in errSecSuccess })
-        suite.expect(CommandBarQueryHabits.loadInstallationKey(using: repairedStore)
-                == persistedHabitKey,
-               "a repaired query key is published only after successful read-back")
-
-        keyReads = [(errSecItemNotFound, nil)]
-        let randomFailureStore = CommandBarQueryHabitKeyStore(
-            read: { keyReads.removeFirst() },
-            randomKey: { nil },
-            add: { _ in errSecSuccess },
-            update: { _ in errSecSuccess })
-        suite.expect(CommandBarQueryHabits.loadInstallationKey(using: randomFailureStore) == nil,
-               "random generation failure leaves query learning without a key")
-
-        keyReads = [(errSecItemNotFound, nil)]
-        let addFailureStore = CommandBarQueryHabitKeyStore(
-            read: { keyReads.removeFirst() },
-            randomKey: { persistedHabitKey },
-            add: { _ in errSecInteractionNotAllowed },
-            update: { _ in errSecSuccess })
-        suite.expect(CommandBarQueryHabits.loadInstallationKey(using: addFailureStore) == nil,
-               "a failed query-key insert never publishes its random candidate")
-
-        let loadStarted = DispatchSemaphore(value: 0)
-        let letLoadFinish = DispatchSemaphore(value: 0)
-        let cache = CommandBarQueryHabitKeyCache(
-            queue: DispatchQueue(label: "org.vorssaint.tests.command-bar-query-key")) {
-                loadStarted.signal()
-                letLoadFinish.wait()
-                return persistedHabitKey
-            }
-        let keyReady = DispatchSemaphore(value: 0)
-        cache.warm { keyReady.signal() }
-        suite.expect(loadStarted.wait(timeout: .now() + 1) == .success && cache.cachedKey == nil,
-               "query-key warm-up never waits on the typing path")
-        letLoadFinish.signal()
-        suite.expect(keyReady.wait(timeout: .now() + 1) == .success
-                && cache.cachedKey == persistedHabitKey,
-               "a background query-key load publishes a validated key and announces readiness")
-
-        let removalQueue = DispatchQueue(label: "org.vorssaint.tests.query-key-removal")
-        let removalLoadStarted = DispatchSemaphore(value: 0)
-        let finishRemovalLoad = DispatchSemaphore(value: 0)
-        let removedKeyReady = DispatchSemaphore(value: 0)
-        var keyLifecycle: [String] = []
-        let removalCache = CommandBarQueryHabitKeyCache(queue: removalQueue) {
-            keyLifecycle.append("load started")
-            removalLoadStarted.signal()
-            finishRemovalLoad.wait()
-            keyLifecycle.append("load finished")
-            return persistedHabitKey
-        }
-        removalCache.warm { removedKeyReady.signal() }
-        suite.expect(removalLoadStarted.wait(timeout: .now() + 1) == .success,
-               "the uninstall race starts with a key load in flight")
-        let keyRemoval = removalCache.stopAndRemove { keyLifecycle.append("removed") }
-        removalCache.warm { removedKeyReady.signal() }
-        finishRemovalLoad.signal()
-        suite.expect(keyRemoval.wait(timeout: .now() + 1) == .success,
-               "uninstall waits for key deletion after the pending load")
-        removalCache.warm { removedKeyReady.signal() }
-        removalQueue.sync {}
-        suite.expect(keyLifecycle == ["load started", "load finished", "removed"]
-                && removalCache.cachedKey == nil
-                && removedKeyReady.wait(timeout: .now()) == .timedOut,
-               "uninstall suppresses readiness and later warm-ups without recreating the key")
-
-        var retryCount = 0
-        let retryCache = CommandBarQueryHabitKeyCache(
-            queue: DispatchQueue(label: "org.vorssaint.tests.command-bar-query-key-retry")) {
-                retryCount += 1
-                return retryCount == 1 ? nil : persistedHabitKey
-            }
-        retryCache.warm()
-        let secondRetryDeadline = Date().addingTimeInterval(1)
-        while retryCache.cachedKey == nil && Date() < secondRetryDeadline {
-            retryCache.warm()
-            Thread.sleep(forTimeInterval: 0.001)
-        }
-        suite.expect(retryCount == 2 && retryCache.cachedKey == persistedHabitKey,
-               "a failed query-key warm-up remains retryable")
+        let sessionQuery = CommandBarQueryHabits.prepare("session choice")
+        let sessionChoices = CommandBarQueryHabits.recording(
+            [:], preparedQuery: sessionQuery, resultID: "app.session", now: barNow)
+        suite.expect(!sessionQuery.isEmpty && CommandBarQueryHabits.boost(
+            for: "app.session", preparedQuery: CommandBarQueryHabits.prepare("session choice"),
+            store: sessionChoices, now: barNow) > 0,
+            "query learning works immediately within the process without loading a stored key")
+        suite.expect(CommandBarQueryHabits.boost(
+            for: "app.session", preparedQuery: CommandBarQueryHabits.prepare("session choice", key: habitKey),
+            store: sessionChoices, now: barNow) == 0,
+            "a different session key cannot reuse past query learning")
         let completedEmoji = CommandBarCompletion.completedQuery(
             current: ":fire", title: "🔥  fire", matchTitle: "fire")
         suite.expect(completedEmoji == ":fire"
@@ -1784,6 +1777,11 @@ enum CommandBarFeatureTests {
         let learningDefaultsName = "com.vorssaint.tests.command-bar-learning"
         let learningDefaults = UserDefaults(suiteName: learningDefaultsName)!
         learningDefaults.set("usage", forKey: DefaultsKey.commandBarUsage)
+        learningDefaults.set("habits", forKey: DefaultsKey.commandBarQueryHabits)
+        CommandBarLearning.discardLegacyQueryHabits(in: learningDefaults)
+        suite.expect(learningDefaults.object(forKey: DefaultsKey.commandBarQueryHabits) == nil
+                && learningDefaults.string(forKey: DefaultsKey.commandBarUsage) == "usage",
+               "migration drops legacy query history while preserving general usage ranking")
         learningDefaults.set("habits", forKey: DefaultsKey.commandBarQueryHabits)
         CommandBarLearning.forgetAll(in: learningDefaults)
         suite.expect(learningDefaults.object(forKey: DefaultsKey.commandBarUsage) == nil
@@ -2067,5 +2065,49 @@ enum CommandBarTerminationContract {
         // A regression may only deliver after leaving the modal mode; drain
         // that reply before fixture cleanup while retaining the failed verdict.
         awaitReply(modalApp)
+    }
+}
+
+enum CommandBarAppSortContract {
+    static func run(_ suite: TestSuite) {
+        typealias Row = (key: String, title: String)
+        let rows: [Row] = [("mail", "Mail"), ("app10", "App 10"), ("app2", "App 2"),
+                           ("safari", "Safari"), ("notes", "Notes")]
+        let aliases = ["safari": "web", "mail": "inbox", "notes": ""]
+        let shortcuts = ["notes": GlobalShortcut(keyCode: 45, modifiers: [.option, .command]),
+                         "mail": GlobalShortcut(keyCode: 11, modifiers: [.option, .command])]
+        let pins: Set<String> = ["safari", "app2"]
+        func order(_ column: CommandBarAppSort.Column, ascending: Bool = true) -> [String] {
+            CommandBarAppSort.sorted(rows, by: column, ascending: ascending,
+                                     title: \.title, key: \.key, aliases: aliases,
+                                     shortcuts: shortcuts, pins: pins).map(\.key)
+        }
+
+        suite.expect(order(.name) == ["app2", "app10", "mail", "notes", "safari"],
+                     "the name column keeps the numeric-aware order the table always had")
+        suite.expect(order(.name, ascending: false) == ["safari", "notes", "mail", "app10", "app2"],
+                     "the name column can be reversed")
+        let byShortcut = order(.shortcut)
+        suite.expect(Set(byShortcut.prefix(2)) == ["mail", "notes"]
+                        && Array(byShortcut.suffix(3)) == ["app2", "app10", "safari"],
+                     "assigned shortcuts come first and unassigned rows follow by name")
+        let reversedShortcut = order(.shortcut, ascending: false)
+        suite.expect(Array(reversedShortcut.prefix(2).reversed()) == Array(byShortcut.prefix(2))
+                        && Array(reversedShortcut.suffix(3)) == ["app2", "app10", "safari"],
+                     "reversing the shortcut column keeps unassigned rows at the bottom")
+        suite.expect(order(.alias) == ["mail", "safari", "app2", "app10", "notes"],
+                     "aliases sort by text, and an empty alias counts as none")
+        suite.expect(order(.alias, ascending: false) == ["safari", "mail", "app2", "app10", "notes"],
+                     "reversing the alias column keeps rows without one at the bottom")
+        suite.expect(order(.pinned) == ["app2", "safari", "app10", "mail", "notes"],
+                     "pinned rows come first, each group ordered by name")
+        suite.expect(order(.pinned, ascending: false) == ["app10", "mail", "notes", "app2", "safari"],
+                     "reversing the pinned column puts unpinned rows first")
+        let same = GlobalShortcut(keyCode: 11, modifiers: [.command])
+        let tied = CommandBarAppSort.sorted(rows, by: .shortcut, ascending: false,
+                                            title: \.title, key: \.key, aliases: [:],
+                                            shortcuts: ["safari": same, "mail": same], pins: [])
+        suite.expect(tied.prefix(2).map(\.key) == ["mail", "safari"],
+                     "equal shortcuts fall back to the name in either direction")
     }
 }

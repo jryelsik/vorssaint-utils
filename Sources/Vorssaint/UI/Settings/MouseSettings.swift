@@ -27,6 +27,8 @@ struct MouseSettings: View {
     @AppStorage(DefaultsKey.mouseAccelerationDisabled) private var mouseAccelerationDisabled = false
     @AppStorage(DefaultsKey.smoothScrollResponse) private var smoothScrollResponse =
         SmoothScrollSupport.defaultResponse
+    @AppStorage(DefaultsKey.smoothScrollCoast) private var smoothScrollCoast =
+        SmoothScrollSupport.defaultCoast
     @AppStorage(DefaultsKey.mouseNavigationEnabled) private var mouseNavigationEnabled = false
     @AppStorage(DefaultsKey.mouseButtonShortcutsEnabled) private var mouseButtonShortcutsEnabled = false
     @AppStorage(DefaultsKey.mouseSpacesGestureEnabled) private var spacesEnabled = false
@@ -138,7 +140,8 @@ struct MouseSettings: View {
                 ForEach(legendFeatures, id: \.self) { feature in
                     let on = isOn(feature)
                     Button {
-                        SettingsRouter.shared.request(feature.settingsDestination)
+                        SettingsRouter.shared.request(feature.settingsDestination,
+                                                      sidebarFeature: feature)
                     } label: {
                         HStack(spacing: 10) {
                             Circle()
@@ -312,6 +315,13 @@ struct MouseSettings: View {
                                       ... Double(SmoothScrollSupport.responseRange.upperBound),
                                   step: 5,
                                   readout: "\(SmoothScrollSupport.sanitizedResponse(smoothScrollResponse))%")
+                            .padding(.top, 6)
+                        sliderRow(l10n.s.smoothScrollCoastLabel,
+                                  value: smoothScrollCoastBinding,
+                                  range: Double(SmoothScrollSupport.coastRange.lowerBound)
+                                      ... Double(SmoothScrollSupport.coastRange.upperBound),
+                                  step: 5,
+                                  readout: "\(SmoothScrollSupport.sanitizedCoast(smoothScrollCoast))%")
                             .padding(.top, 6)
                     } label: {
                         Text(mouseClickDebounceText.moreOptions)
@@ -520,6 +530,13 @@ struct MouseSettings: View {
         Binding(
             get: { Double(SmoothScrollSupport.sanitizedResponse(smoothScrollResponse)) },
             set: { smoothScrollResponse = Int($0) }
+        )
+    }
+
+    private var smoothScrollCoastBinding: Binding<Double> {
+        Binding(
+            get: { Double(SmoothScrollSupport.sanitizedCoast(smoothScrollCoast)) },
+            set: { smoothScrollCoast = Int($0) }
         )
     }
 

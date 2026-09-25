@@ -45,7 +45,7 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
                                         defaults: .standard)
     private var hasLoaded = false
     private var isReplacingText = false
-    private var modalInteractionActive = false
+    private(set) var modalInteractionActive = false
 
     private override init() {
         super.init()
@@ -81,6 +81,10 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
     /// always lands the caret in the text.
     func toggle() {
         guard !modalInteractionActive else { return }
+        if NotchService.shared.showScratchpad(toggle: true) {
+            if isVisible { hide() }
+            return
+        }
         if isVisible, panel?.isKeyWindow == true {
             hide()
         } else {
@@ -88,8 +92,14 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
-    func show() {
+    /// The island's own open action passes false: it moves the document out
+    /// to the floating pad instead of routing it back into the island.
+    func show(allowsIsland: Bool = true) {
         guard AppFeature.scratchpad.isAvailable, !modalInteractionActive else { return }
+        if allowsIsland, NotchService.shared.showScratchpad() {
+            if isVisible { hide() }
+            return
+        }
         if isVisible {
             focusText(requiresKeyWindow: false)
             return
@@ -290,9 +300,10 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     /// Activate for dialog input and return focus to the originating host.
-    /// The island needs a sheet to keep the dialog above its floating surface.
+    /// The island's dialog floats just above it: a sheet would move and
+    /// reskin the borderless surface.
     func exportText(suggestedName: String, from window: NSWindow? = nil) {
-        guard !text.isEmpty, !modalInteractionActive,
+        guard !text.isEmpty, !modalInteractionActive, let padID = selectedPadID,
               let sourceWindow = window ?? panel, sourceWindow.isVisible else { return }
         modalInteractionActive = true
         flushSave()
@@ -301,11 +312,16 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
         savePanel.canCreateDirectories = true
         savePanel.isExtensionHidden = false
         savePanel.nameFieldStringValue = suggestedName
-        let content = text
         let complete: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             self?.modalInteractionActive = false
             if response == .OK, let url = savePanel.url {
                 do {
+                    // The island's dialog leaves the pad editable, so the file
+                    // gets the pad as it is when the save is confirmed. A pad
+                    // closed meanwhile is reported like any failed write.
+                    guard let content = self?.document?.pads.first(where: { $0.id == padID })?.text else {
+                        throw CocoaError(.fileNoSuchFile)
+                    }
                     try content.write(to: url, atomically: true, encoding: .utf8)
                 } catch {
                     // A read-only volume or a full disk used to end here in
@@ -315,14 +331,21 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
                         message: FeatureStrings.scratchpad(L10n.shared.language).exportFailed)
                 }
             }
-            // Sheet dismissal restores the previous key window after completion.
+            // Dismissal restores the previous key window after completion.
             DispatchQueue.main.async {
                 if sourceWindow.isVisible { sourceWindow.makeKey() }
             }
         }
         if sourceWindow === NotchService.shared.presentationWindow {
-            savePanel.beginSheetModal(for: sourceWindow, completionHandler: complete)
+            // modalInteractionActive keeps the island's working surface
+            // while its independent dialog is up.
+            savePanel.level = NSWindow.Level(rawValue: sourceWindow.level.rawValue + 1)
+            // Like the sheet it replaces, it stays up while another app is active.
+            savePanel.hidesOnDeactivate = false
+            savePanel.begin(completionHandler: complete)
             NSApp.activate(ignoringOtherApps: true)
+            // Activation alone can leave the nonactivating island holding focus.
+            savePanel.makeKeyAndOrderFront(nil)
         } else {
             NSApp.activate(ignoringOtherApps: true)
             DispatchQueue.main.async { complete(savePanel.runModal()) }
@@ -356,7 +379,7 @@ final class ScratchpadService: NSObject, ObservableObject, NSWindowDelegate {
 
     /// Borderless panels refuse key status by default; the pad needs it so
     /// typing and Esc work without activating the app.
-    private final class KeyableScratchpadPanel: NSPanel {
+    private final class KeyableScratchpadPanel: OverlayPanel {
         override var canBecomeKey: Bool { true }
     }
 

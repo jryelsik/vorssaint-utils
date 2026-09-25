@@ -239,6 +239,13 @@ enum RepositoryFeatureTests {
                "a site the user added gets a row of its own")
         suite.expect(ruleGroups.contains { $0.site == "youtube.com" },
                "every built-in site is listed")
+        expectEqual(URLCleaning.clean("https://www.xiaohongshu.com/?shareRedId=a&exSource=b&id=1")?.url ?? "",
+                    "https://www.xiaohongshu.com/?id=1",
+                    "a built-in name spelled in mixed case by the site is still removed")
+        let upperCaseBuiltIns = URLCleaning.ruleGroups(rules: .none)
+            .flatMap(\.entries).map(\.name).filter { $0 != $0.lowercased() }
+        suite.expect(upperCaseBuiltIns.isEmpty,
+               "built-in names are lowercase, since matching and switched off names are: \(upperCaseBuiltIns)")
         expectEqual(URLCleaning.siteKey(from: " https://WWW.Weibo.com/path?x=1 ") ?? "",
                     "weibo.com", "the site field takes a pasted link and keeps the host")
         suite.expect(URLCleaning.siteKey(from: "not a host") == nil,
@@ -452,9 +459,23 @@ enum RepositoryFeatureTests {
         expectEqual(HomebrewAnalytics.url(kind: .cask).absoluteString,
                     "https://formulae.brew.sh/api/analytics/cask-install/homebrew-cask/30d.json",
                     "Homebrew cask popularity uses cask install analytics")
-        expectEqual(HomebrewAnalytics.compactCount(999), "999", "Homebrew popularity under 1K stays plain")
-        expectEqual(HomebrewAnalytics.compactCount(1_250), "1.2K", "Homebrew popularity compacts thousands")
-        expectEqual(HomebrewAnalytics.compactCount(1_200_000), "1.2M", "Homebrew popularity compacts millions")
+        do {
+            let originalLocale = MetricFormat.locale
+            defer { MetricFormat.locale = originalLocale }
+            // Run independently of both the Mac's region and other suites.
+            for (region, thousands, millions) in [
+                ("en_US_POSIX", "1.2K", "1.2M"),
+                ("pt_BR", "1,2K", "1,2M"),
+            ] {
+                MetricFormat.locale = Locale(identifier: region)
+                expectEqual(HomebrewAnalytics.compactCount(999), "999",
+                            "Homebrew popularity under 1K stays plain in \(region)")
+                expectEqual(HomebrewAnalytics.compactCount(1_250), thousands,
+                            "Homebrew popularity compacts thousands in \(region)")
+                expectEqual(HomebrewAnalytics.compactCount(1_200_000), millions,
+                            "Homebrew popularity compacts millions in \(region)")
+            }
+        }
         let shellSetupCommand = HomebrewCommandBuilder.shellConfigCommand(brewPath: brewPath,
                                                                           homeDirectory: "/Users/test",
                                                                           shellPath: "/bin/zsh")
@@ -643,6 +664,93 @@ enum RepositoryFeatureTests {
         suite.expect(HomebrewPackageOrdering.updatesFirst(orderingPackages).map(\.name)
                == ["beta-tool", "gamma-tool", "alpha-tool", "delta-tool"],
                "Homebrew installed packages keep all pending updates first without reordering either group")
+        let dependencyJSON = """
+        {
+          "formulae": [
+            { "name": "app-a", "full_name": "app-a",
+              "installed": [{ "version": "1", "installed_on_request": true,
+                              "runtime_dependencies": [{ "full_name": "shared-lib" }, { "full_name": "deep-lib" }] }] },
+            { "name": "app-b", "full_name": "example/tap/app-b",
+              "installed": [{ "version": "1", "installed_on_request": true,
+                              "runtime_dependencies": [{ "full_name": "shared-lib" }, { "full_name": "example/tap/tap-lib" }] }] },
+            { "name": "shared-lib", "full_name": "shared-lib",
+              "installed": [{ "version": "2", "installed_on_request": false,
+                              "runtime_dependencies": [{ "full_name": "deep-lib" }] }] },
+            { "name": "deep-lib", "full_name": "deep-lib",
+              "installed": [{ "version": "3", "installed_on_request": false, "runtime_dependencies": [] }] },
+            { "name": "tap-lib", "full_name": "example/tap/tap-lib",
+              "installed": [{ "version": "4", "installed_on_request": false, "runtime_dependencies": [] }] },
+            { "name": "cask-lib", "full_name": "cask-lib",
+              "installed": [{ "version": "5", "installed_on_request": false, "runtime_dependencies": [] }] },
+            { "name": "orphan-lib", "full_name": "orphan-lib",
+              "installed": [{ "version": "6", "installed_on_request": false, "runtime_dependencies": [] }] }
+          ],
+          "casks": [
+            { "token": "cask-app", "name": ["Cask App"], "installed": "1",
+              "depends_on": { "formula": ["cask-lib"] } }
+          ]
+        }
+        """
+        let dependencyPackages = (try? HomebrewParser.parseInfoJSON(Data(dependencyJSON.utf8))) ?? []
+        let folded = HomebrewDependencyGraph.fold(dependencyPackages, installed: dependencyPackages)
+        let flat = HomebrewDependencyGraph.display(dependencyPackages,
+                                                   installed: dependencyPackages,
+                                                   groupDependencies: false)
+        suite.expect(flat.rows.map(\.id) == dependencyPackages.map(\.id)
+                     && flat.rows.count == dependencyPackages.count
+                     && flat.dependencies.isEmpty,
+                     "Homebrew flat mode retains every installed row in its incoming order and shows no nested duplicates")
+        let grouped = HomebrewDependencyGraph.display(dependencyPackages,
+                                                      installed: dependencyPackages,
+                                                      groupDependencies: true)
+        suite.expect(grouped.rows.map(\.id) == folded.rows.map(\.id)
+                     && Set(grouped.dependencies.keys) == Set(folded.dependencies.keys),
+                     "Homebrew grouped mode preserves the existing dependency layout")
+        suite.expect(folded.rows.map(\.name) == ["cask-app", "app-a", "example/tap/app-b", "orphan-lib"],
+                     "Homebrew keeps requested packages and unneeded dependencies as rows, found \(folded.rows.map(\.name))")
+        suite.expect(folded.dependencies["formula:app-a"]?.map(\.name) == ["deep-lib", "shared-lib"],
+                     "Homebrew lists direct and transitive dependencies under a requested formula")
+        suite.expect(folded.dependencies["formula:example/tap/app-b"]?.map(\.name)
+                     == ["deep-lib", "example/tap/tap-lib", "shared-lib"],
+                     "Homebrew lists a shared dependency under each parent and resolves tapped names")
+        suite.expect(folded.dependencies["cask:cask-app"]?.map(\.name) == ["cask-lib"],
+                     "Homebrew lists a cask's formula dependencies under the cask")
+        let withUpdate = HomebrewPackageOrdering.updatesFirst(dependencyPackages.map { package in
+            var package = package
+            if package.name == "shared-lib" {
+                package.update = HomebrewPackageUpdate(kind: .formula, name: "shared-lib",
+                                                       installedVersions: ["2"], currentVersion: "3", isPinned: false)
+            }
+            return package
+        })
+        let updateFolded = HomebrewDependencyGraph.fold(withUpdate, installed: withUpdate)
+        let flatWithUpdate = HomebrewDependencyGraph.display(withUpdate,
+                                                             installed: withUpdate,
+                                                             groupDependencies: false)
+        suite.expect(flatWithUpdate.rows.map(\.id) == withUpdate.map(\.id)
+                     && flatWithUpdate.rows.first?.name == "shared-lib",
+                     "Homebrew flat mode keeps update-first ordering and includes dependencies as top-level rows")
+        suite.expect(updateFolded.rows.map(\.name) == ["shared-lib", "cask-app", "app-a", "example/tap/app-b", "orphan-lib"]
+                     && updateFolded.dependencies["formula:app-a"]?.map(\.name) == ["deep-lib", "shared-lib"],
+                     "Homebrew keeps a reached dependency with an update as its own first row and under its parent, found \(updateFolded.rows.map(\.name))")
+        let formulaOnly = dependencyPackages.filter { $0.kind == .formula }
+        let flatFormulaOnly = HomebrewDependencyGraph.display(formulaOnly,
+                                                              installed: dependencyPackages,
+                                                              groupDependencies: false)
+        suite.expect(flatFormulaOnly.rows.count == formulaOnly.count
+                     && flatFormulaOnly.rows.allSatisfy { $0.kind == .formula },
+                     "Homebrew flat mode keeps the active filter and its displayed count")
+        suite.expect(HomebrewDependencyGraph.fold(formulaOnly, installed: dependencyPackages).rows.map(\.name).contains("cask-lib"),
+                     "Homebrew shows a cask's dependency as a row when the filter hides the cask")
+        let oldBrewPackages = (try? HomebrewParser.parseInfoJSON(Data(dependencyJSON
+            .replacingOccurrences(of: "\"installed_on_request\": true,", with: "")
+            .replacingOccurrences(of: "\"installed_on_request\": false,", with: "").utf8))) ?? []
+        let oldBrewFolded = HomebrewDependencyGraph.fold(oldBrewPackages, installed: oldBrewPackages)
+        suite.expect(oldBrewFolded.rows.count == 8 && oldBrewFolded.dependencies.isEmpty,
+                     "Homebrew keeps the flat list when brew does not report installed_on_request, found \(oldBrewFolded.rows.count)")
+        suite.expect(Defaults.registeredDefaults[DefaultsKey.homebrewGroupDependencies] as? Bool == true
+                     && SettingsBackupSupport.exportKeys().contains(DefaultsKey.homebrewGroupDependencies),
+                     "Homebrew grouping remains the default and the alternative layout travels with settings backups")
         let searchPackages = HomebrewParser.parseSearchOutput("sample-formula\nbad token\nsample-filter\nsample-tool\n",
                                                               kind: .formula,
                                                               installed: homebrewPackages)
@@ -1202,19 +1310,20 @@ enum RepositoryFeatureTests {
                                                 encoding: .utf8)) ?? ""
         suite.expect(!selfUninstallSource.isEmpty && !uninstallScriptSource.isEmpty,
                "uninstall sources read back for uninstallation alignment check")
+        suite.expect(selfUninstallSource.contains("CleaningModeManager.shared.deactivateForSystemTeardown()"),
+               "permission reset removes the cleaning input tap synchronously")
         let queryHabitSupportSource = repository.source(
             at: "Sources/Vorssaint/Services/CommandBar/CommandBarSupport.swift")
-        suite.expect(selfUninstallSource.contains("CommandBarQueryHabits.removeInstallationKey()")
-                && queryHabitSupportSource.contains("installationKeyCache.stopAndRemove {")
-                && queryHabitSupportSource.contains("SecItemDelete([")
-                && queryHabitSupportSource.contains("kSecClass: kSecClassGenericPassword")
-                && queryHabitSupportSource.contains("kSecAttrService: keyService")
-                && queryHabitSupportSource.contains("kSecAttrAccount: keyAccount")
-                && queryHabitSupportSource.contains("keyService = installationKeyService(")
-                && queryHabitSupportSource.contains("keyAccount = \"hmac-key\"")
-                && uninstallScriptSource.contains("/usr/bin/security delete-generic-password")
-                && uninstallScriptSource.contains("-s \"$BUNDLE.command-bar-query-habits\" -a \"hmac-key\""),
-               "both uninstall paths remove only the query-learning Keychain item")
+        let queryHabitServiceSource = repository.source(
+            at: "Sources/Vorssaint/Services/CommandBar/CommandBarService.swift")
+        suite.expect(!queryHabitSupportSource.isEmpty
+                && !queryHabitServiceSource.isEmpty
+                && !queryHabitSupportSource.contains("SecItem")
+                && !queryHabitSupportSource.contains("import Security")
+                && !selfUninstallSource.contains("removeInstallationKey")
+                && !uninstallScriptSource.contains("delete-generic-password")
+                && !queryHabitServiceSource.contains("DefaultsKey.commandBarQueryHabits"),
+               "query learning and uninstall never access Keychain or persist query habits")
         let requiredSubpaths = ["Library/Application Support", "Library/Caches", "Library/HTTPStorages"]
         for subpath in requiredSubpaths {
             suite.expect(selfUninstallSource.contains(subpath) && uninstallScriptSource.contains(subpath),
@@ -1234,9 +1343,11 @@ enum RepositoryFeatureTests {
         suite.expect(!selfUninstallSource.contains("_ = Sudoers.pmsetDisableSleep")
                 && !uninstallerSource.contains("_ = Sudoers.pmsetDisableSleep"),
                "neither uninstall path discards the result of restoring sleep")
-        suite.expect(selfUninstallSource.contains("guard detachFromSystem() else")
+        suite.expect(selfUninstallSource.contains("guard restoreSleepBeforeRemoval() else")
+                && selfUninstallSource.contains("guard detachFromSystem() else")
                 && selfUninstallSource.contains("restoreSleepBeforeRemoval() -> Bool")
-                && selfUninstallSource.contains("guard FanControlService.restoreAndUnregisterForRemoval() else")
+                && selfUninstallSource.contains("guard detachFanControl() else")
+                && selfUninstallSource.contains("FanControlService.restoreAndUnregisterForRemoval()")
                 && selfUninstallSource.contains("adminPromptRecover")
                 && selfUninstallSource.contains("verification.status == 0"),
                "in-app uninstall aborts unless fans and normal sleep are restored before removal")

@@ -182,6 +182,7 @@ final class FeatureRuntime: ObservableObject {
         .windowLayout: {
             WindowUseTracker.shared.syncWithFeatures()
             WindowLayoutService.shared.syncWithPreferences()
+            PointerDisplayService.shared.syncWithPreferences()
         },
         .autoQuit: { AutoQuitService.shared.syncWithPreferences() },
         .scrollInverter: { ScrollInverter.shared.syncWithPreferences() },
@@ -227,7 +228,18 @@ final class FeatureRuntime: ObservableObject {
             AppVolumeMixer.shared.syncWithPreferences()
             AudioInputDeviceManager.shared.syncWithPreferences()
         },
-        .soundOutputSwitcher: { SoundOutputSwitcher.shared.syncWithPreferences() },
+        .soundOutputSwitcher: {
+            AppVolumeMixer.shared.syncWithPreferences()
+            SoundOutputSwitcher.shared.syncWithPreferences()
+        },
+        .audioPriority: {
+            // Priority owns no sibling CoreAudio listener stack. Keep the
+            // shared system-device observers alive even when Volume mixer is
+            // not installed, then start/stop the policy that consumes them.
+            AppVolumeMixer.shared.syncWithPreferences()
+            AudioInputDeviceManager.shared.syncWithPreferences()
+            AudioPriorityService.shared.syncWithPreferences()
+        },
         .micMute: { MicMuteService.shared.syncWithPreferences() },
         .musicBlock: { MusicLaunchBlocker.shared.syncWithPreferences() },
         .keepAwake: {
@@ -256,6 +268,7 @@ final class FeatureRuntime: ObservableObject {
             RecentCaptureService.shared.syncWithPreferences()
         },
         .cameraPreview: { CameraPreviewService.shared.syncWithPreferences() },
+        .wallpaper: { WallpaperService.shared.syncWithPreferences() },
         .radialMenu: { RadialMenuService.shared.syncWithPreferences() },
         .notch: { NotchService.shared.syncWithPreferences() },
         .notchGestures: {
@@ -286,6 +299,10 @@ final class FeatureRuntime: ObservableObject {
             if AppFeature.notch.isAvailable { NotchService.shared.syncWithPreferences() }
             else { NotchCalendarService.shared.stop() }
         },
+        .notchAgents: {
+            if AppFeature.notch.isAvailable { NotchService.shared.syncWithPreferences() }
+            else { AgentUsageService.shared.stop() }
+        },
         .scratchpad: { ScratchpadService.shared.syncWithPreferences() },
         .commandBar: { CommandBarService.shared.syncWithPreferences() },
         .cleaner: {
@@ -303,7 +320,7 @@ final class FeatureRuntime: ObservableObject {
         .monitorMemory: { FeatureRuntime.syncMonitor() },
         .monitorNetwork: { FeatureRuntime.syncMonitor() },
         .monitorDisk: { FeatureRuntime.syncMonitor() },
-        .monitorUSB: { FeatureRuntime.syncMonitor() },
+        .connectedDevices: { FeatureRuntime.syncMonitor() },
         .monitorPower: { FeatureRuntime.syncMonitor() },
         .fanControl: {
             SystemMonitor.shared.planDidChange()

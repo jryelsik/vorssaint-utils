@@ -11,7 +11,7 @@ protocol PanelOrderItem: RawRepresentable, CaseIterable, Hashable where RawValue
 /// renaming a case would orphan a user's stored layout — keep them stable.
 enum PanelSectionID: String, CaseIterable, Identifiable, Hashable {
     case keepAwake, brightness, mixer, system, network, disk, usb, power, fanControl, utilities, controls,
-         toggles
+         toggles, wallpaper
 
     var id: String { rawValue }
 
@@ -30,6 +30,7 @@ enum PanelSectionID: String, CaseIterable, Identifiable, Hashable {
         case .utilities: return s.utilitiesSection
         case .controls: return s.quickControlsSection
         case .toggles: return FeatureStrings.quickToggles(L10n.shared.language).pageTitle
+        case .wallpaper: return FeatureStrings.wallpaper(L10n.shared.language).pageTitle
         }
     }
 
@@ -47,6 +48,7 @@ enum PanelSectionID: String, CaseIterable, Identifiable, Hashable {
         case .utilities: return "wrench.and.screwdriver.fill"
         case .controls: return "switch.2"
         case .toggles: return "togglepower"
+        case .wallpaper: return "photo.on.rectangle"
         }
     }
 
@@ -67,6 +69,7 @@ enum PanelSectionID: String, CaseIterable, Identifiable, Hashable {
         case .utilities: return DefaultsKey.panelShowUtilities
         case .controls: return DefaultsKey.panelShowControls
         case .toggles: return DefaultsKey.panelShowToggles
+        case .wallpaper: return DefaultsKey.panelShowWallpaper
         }
     }
 
@@ -81,11 +84,11 @@ enum PanelSectionID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .keepAwake: return [.keepAwake]
         case .brightness: return [.brightness]
-        case .mixer: return [.mixer]
+        case .mixer: return [.mixer, .audioPriority]
         case .system: return [.monitorCPU, .monitorGPU, .monitorMemory]
         case .network: return [.monitorNetwork]
         case .disk: return [.monitorDisk]
-        case .usb: return [.monitorUSB]
+        case .usb: return [.connectedDevices]
         case .power: return [.monitorPower]
         case .fanControl: return [.fanControl]
         case .utilities: return [.quickLauncher, .cleaner, .homebrew, .appUpdates, .mediaTools,
@@ -98,6 +101,7 @@ enum PanelSectionID: String, CaseIterable, Identifiable, Hashable {
                                 .shelf, .windowMaximizer, .dockPreview, .keyboardDebounce, .dockClick,
                                 .middleClick, .textSnippets, .superKey, .radialMenu, .mouseClickDebounce, .notch]
         case .toggles: return [.quickToggles, .micMute]
+        case .wallpaper: return [.wallpaper]
         }
     }
 

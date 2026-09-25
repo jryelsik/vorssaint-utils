@@ -9,7 +9,11 @@ import Combine
 /// they alter computed geometry without publishing a service property.
 enum NotchPresentationRefreshContract {
     typealias DispatchQueue = NotchScreenRefreshContract.DispatchQueue
-    enum NSEvent { static var mouseLocation = CGPoint.zero }
+    enum NSEvent {
+        static var mouseLocation = CGPoint.zero
+        static var monitorRemovals = 0
+        static func removeMonitor(_ token: Any) { monitorRemovals += 1 }
+    }
     enum NotchPanel { static let normalLevel = 0 }
     final class CaptureOptions {
         var hasFocusedControl = false
@@ -36,6 +40,7 @@ enum NotchPresentationRefreshContract {
     }
     final class Panel {
         var isVisible = true
+        var alphaValue: CGFloat = 1
         var ignoresMouseEvents = false, acceptsKeyFocus = true, acceptsMouseMovedEvents = false
         var attachedSheet: Bool?
         var level = 1, keyRequests = 0
@@ -46,8 +51,23 @@ enum NotchPresentationRefreshContract {
     }
     final class Host {
         let panel = Panel()
+        var concealedForMissionControl = false
+        var isConcealedForMissionControl: Bool { concealedForMissionControl }
+        var missionControlDidRestore: (() -> Void)?
+        var missionControlAlpha: CGFloat = 1
+        var missionControlMouseEvents = false
+        var desktopReadings = 0
+        var mouseEventsBeforeHide: Bool?
+        var hidesWhenSettled = false
+        var restoringFromMissionControl = false
+        var fadeCompletion: (() -> Void)?
+        func fadeMissionControl(to alpha: CGFloat, completion: (() -> Void)? = nil) {
+            panel.alphaValue = alpha
+            fadeCompletion = completion
+        }
+        func syncMissionControlMonitoring() {}
         var hideAnimations: [Bool] = []
-        func hide(animated: Bool) {
+        func hide(animated: Bool, transitionContent: NotchContentTransition = .none) {
             hideAnimations.append(animated)
             panel.orderOut(nil)
         }
@@ -56,13 +76,15 @@ enum NotchPresentationRefreshContract {
         var animatingFrame: CGRect?
         var activationRect = CGRect.zero
         var activate: (() -> Void)?
-        func containsHover(_ point: CGPoint) -> Bool { frame.contains(point) }
-        func contains(_ point: CGPoint) -> Bool { (animatingFrame ?? frame).contains(point) }
+        func containsHover(_ point: CGPoint) -> Bool { !concealedForMissionControl && frame.contains(point) }
+        func contains(_ point: CGPoint) -> Bool { !concealedForMissionControl && (animatingFrame ?? frame).contains(point) }
         var onPresent: ((CGSize) -> Void)?
+        var usesGlass = false
         var revealFromHidden = false
         func present(size: CGSize, geometry: NotchGeometry, animated: Bool,
                      transitionContent: NotchContentTransition, quickAccess: NotchQuickAccessConfiguration?,
-                     revealFromHidden: Bool) {
+                     revealFromHidden: Bool, usesGlass: Bool) {
+            self.usesGlass = usesGlass
             self.revealFromHidden = revealFromHidden
             onPresent?(size)
             targetSize = size
@@ -74,12 +96,14 @@ enum NotchPresentationRefreshContract {
         }
     }
     class State: ObservableObject {
+        var hiddenInFullscreen = false
         let objectWillChange = ObservableObjectPublisher()
         var running = true, suspended = false
         var mode = NotchTimerMode.timer
         var session = NotchTimerSession()
         var selected = NotchModule.timer
         var captureID: UUID?
+        var captureActions: Bool?
         var captureContent: Bool?
         var captureContentHeight: CGFloat?
         var captureFallback: (() -> Void)?
@@ -87,8 +111,11 @@ enum NotchPresentationRefreshContract {
         var captureHover: ((Bool) -> Void)?
         var pinned = false
         var showingSections = false
+        var showingAppPanel = false
+        var selectedMetric: Bool?
         var expanded = true
         var peeking = false, dragPlaceholder = false, compactActivityIsVisible = false
+        var noticeExpanded = false
         var notice: Bool?
         var captureControls: CaptureOptions?
         var captureControlsCollapsed = false, captureSelectionInProgress = false
@@ -96,8 +123,7 @@ enum NotchPresentationRefreshContract {
         var captureControlsWork: DispatchWorkItem?
         var captureControlsSubscription: AnyCancellable?
         var captureControlsCancel: (() -> Void)?
-        var monitorRemovals = 0
-        func removeCaptureControlsClickThrough() { monitorRemovals += 1 }
+        var captureControlsMonitors: [Any] = []
         func syncVisibleConsumers() {}
         var hoverWork: DispatchWorkItem?
         var hoverState = NotchHoverState()
@@ -105,16 +131,18 @@ enum NotchPresentationRefreshContract {
         var panel: Panel? { windowHost?.panel }
         var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1440, height: 900),
                                      safeAreaTop: 32, cameraWidth: 210)
+        var expandedGeometry: NotchGeometry { geometry }
         var compactActivityGeometry: NotchGeometry { geometry.compactTimerGeometry(showsDownloads: false) }
         var surfaceSize: CGSize {
             if captureControls != nil { return captureControlsCollapsed ? geometry.collapsed : geometry.peek }
             if !expanded, compactActivityIsVisible { return compactActivityGeometry.compactActivitySize }
             if !expanded { return geometry.collapsed }
-            return geometry.expandedSize(module: selected, capturePreviewHeight: captureContent == nil ? nil : captureContentHeight,
+            return expandedGeometry.expandedSize(module: selected, capturePreviewHeight: captureContent == nil ? nil : captureContentHeight,
                                          timerHasSession: session.hasSession,
                                          timerMode: session.hasSession ? session.mode : mode)
         }
         func syncHiddenHoverMonitoring() {}
+        func removeHiddenHoverMonitors() {}
         func toggle() { expanded.toggle() }
         func collapse() { expanded = false }
         var edgeClicksEnabled = false
@@ -125,7 +153,78 @@ enum NotchPresentationRefreshContract {
     static func run(_ suite: TestSuite) {
         UserDefaults.standard.hides = false
         defer { UserDefaults.standard.hides = false }
+        let toolbar = Service()
+        toolbar.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1440, height: 900),
+                                          safeAreaTop: 32, cameraWidth: 210, layout: .spacious)
+        suite.expect(toolbar.expandedGeometry.headerCameraGap == 210,
+                     "a standard wide page puts its header beside the camera")
+        toolbar.selected = .captures
+        toolbar.captureActions = true
+        toolbar.captureContent = true
+        toolbar.captureContentHeight = 150
+        toolbar.refreshPresentation(animated: false)
+        suite.expect(toolbar.expandedGeometry.headerCameraGap == 0
+                     && toolbar.expandedGeometry.headerTopInset == 42
+                     && toolbar.windowHost?.activationRect.height == 42,
+                     "a capture toolbar keeps a full row below the camera without losing actions to the cutout")
+        toolbar.showingSections = true
+        suite.expect(toolbar.expandedGeometry.headerCameraGap == 210,
+                     "leaving capture editing restores the compact header layout")
         captureControlsChecks(suite)
+        let fullscreen = Service()
+        fullscreen.pinned = true
+        fullscreen.hiddenInFullscreen = true
+        fullscreen.refreshPresentation()
+        suite.expect(fullscreen.panel?.isVisible == false && !fullscreen.acceptsSystemFeedback
+                     && !fullscreen.edgeClicksEnabled,
+                     "fullscreen hides even a pinned island and stops routing feedback or edge clicks")
+        fullscreen.hiddenInFullscreen = false
+        fullscreen.refreshPresentation()
+        suite.expect(fullscreen.panel?.isVisible == true && fullscreen.acceptsSystemFeedback,
+                     "leaving fullscreen restores the island and feedback routing")
+        let missionControl = Service()
+        missionControl.windowHost?.concealedForMissionControl = true
+        suite.expect(!missionControl.acceptsSystemFeedback && !missionControl.showsSystemFeedback,
+                     "a concealed island leaves system feedback available to its other presenters")
+        missionControl.windowHost?.concealedForMissionControl = false
+        suite.expect(missionControl.acceptsSystemFeedback && missionControl.showsSystemFeedback,
+                     "leaving Mission Control restores island feedback routing")
+
+        let material = Service()
+        material.expanded = false
+        material.geometry = NotchGeometry(screen: material.geometry.screen, safeAreaTop: 38,
+                                          cameraWidth: 210, compactSideRoom: 0)
+        material.refreshPresentation(animated: false)
+        suite.expect(!material.usesGlassSurface && material.windowHost?.usesGlass == false,
+                     "compact presentation remains opaque regardless of camera or footer height")
+        material.peeking = true
+        material.refreshPresentation(animated: false)
+        suite.expect(material.windowHost?.usesGlass == true, "peek requests the glass backdrop")
+        material.peeking = false
+        material.expanded = true
+        material.refreshPresentation(animated: false)
+        suite.expect(material.windowHost?.usesGlass == true, "expanded content requests the glass backdrop")
+        material.expanded = false
+        material.noticeExpanded = true
+        material.refreshPresentation(animated: false)
+        suite.expect(material.windowHost?.usesGlass == true, "expanded notification requests the glass backdrop")
+
+        let closing = Service()
+        closing.refreshPresentation(animated: false)
+        let open = closing.windowHost?.frame ?? .zero
+        for (point, stillOver) in [(CGPoint(x: open.midX, y: open.minY + 4), false), (CGPoint(x: open.midX, y: open.maxY - 1), true)] {
+            closing.expanded = true
+            closing.refreshPresentation(animated: false)
+            NSEvent.mouseLocation = point
+            closing.hoverState.close(pointerInside: closing.windowHost?.containsHover(point) == true)
+            closing.expanded = false
+            closing.refreshPresentation()
+            suite.expect(closing.hoverState.suppressed == stillOver, stillOver
+                ? "a pointer still over the closed island keeps it from reopening until it leaves"
+                : "closing away from a pointer that has not moved lets its next approach open the island")
+        }
+        NSEvent.mouseLocation = .zero
+
         let service = Service()
         var contentSize = service.surfaceSize
         service.windowHost?.targetSize = contentSize
@@ -238,6 +337,8 @@ enum NotchPresentationRefreshContract {
                "ordinary openings keep their existing presentation behavior")
         simulated.expanded = false
         simulated.refreshPresentation()
+        suite.expect(simulated.windowHost?.hideAnimations.last == true,
+               "closing an expanded island without safe menu space animates its withdrawal")
         suite.expect(simulated.panel?.isVisible == false,
                "closing tools withdraws their simulated cutout if the center is still unverified")
 

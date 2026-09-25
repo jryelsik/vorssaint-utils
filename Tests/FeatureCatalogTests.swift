@@ -112,6 +112,86 @@ enum FeatureCatalogTests {
         suite.expect(!smearedUnlock && smeared.progress == 1,
                "four Escapes with a modifier in between never unlock; the next Escape starts at 1")
 
+        // User-requested teardown waits only for real releases corresponding
+        // to mouse-down events observed while Cleaning Mode was active.
+        var cleaningMouseGate = CleaningMouseReleaseGate()
+        cleaningMouseGate.buttonDown(0)
+        suite.expect(!cleaningMouseGate.requestDeactivation(),
+               "cleaning teardown waits when the primary button went down while the overlay was active")
+        suite.expect(!cleaningMouseGate.buttonUp(1),
+               "an unrelated release cannot complete a pending cleaning teardown")
+        suite.expect(cleaningMouseGate.buttonUp(0),
+               "the matching physical release completes the pending cleaning teardown")
+        suite.expect(cleaningMouseGate.deactivationPending,
+               "the cleaning unlock request remains pending until teardown runs")
+        suite.expect(cleaningMouseGate.requestDeactivation(),
+               "cleaning teardown is immediate when no tracked button is held")
+
+        cleaningMouseGate.reset()
+        cleaningMouseGate.buttonDown(0)
+        cleaningMouseGate.buttonDown(2)
+        suite.expect(!cleaningMouseGate.requestDeactivation(),
+               "cleaning teardown waits for every tracked mouse button")
+        suite.expect(!cleaningMouseGate.buttonUp(0),
+               "releasing one of several held buttons keeps cleaning teardown pending")
+        suite.expect(cleaningMouseGate.buttonUp(2),
+               "the last matching release completes a multi-button cleaning teardown")
+
+        cleaningMouseGate.reset()
+        cleaningMouseGate.buttonDown(0)
+        suite.expect(!cleaningMouseGate.buttonUp(0),
+               "a normal click completed before deactivation never schedules teardown by itself")
+        suite.expect(cleaningMouseGate.requestDeactivation(),
+               "a completed click leaves no stale held-button state")
+        cleaningMouseGate.buttonDown(0)
+        _ = cleaningMouseGate.requestDeactivation()
+        cleaningMouseGate.reset()
+        suite.expect(cleaningMouseGate.pressedButtons.isEmpty && !cleaningMouseGate.deactivationPending,
+               "forced cleaning teardown clears tracked mouse lifecycle state")
+
+        var queuedCleaningMouseGate = CleaningMouseReleaseGate()
+        suite.expect(queuedCleaningMouseGate.requestDeactivation(),
+               "cleaning teardown can be queued when no button is held")
+        queuedCleaningMouseGate.buttonDown(0)
+        suite.expect(queuedCleaningMouseGate.deactivationPending
+                && !queuedCleaningMouseGate.pressedButtons.isEmpty,
+               "a new press before queued teardown is still tracked")
+        suite.expect(!queuedCleaningMouseGate.buttonUp(1),
+               "an unrelated release cannot finish a newly tracked press")
+        suite.expect(queuedCleaningMouseGate.buttonUp(0),
+               "the new press must receive its matching release")
+        queuedCleaningMouseGate.buttonDown(2)
+        suite.expect(queuedCleaningMouseGate.deactivationPending
+                && !queuedCleaningMouseGate.pressedButtons.isEmpty,
+               "a press after the last release still postpones queued teardown")
+        suite.expect(queuedCleaningMouseGate.buttonUp(2),
+               "the final new press also needs its matching release")
+
+        var disabledTapMouseGate = CleaningMouseReleaseGate()
+        disabledTapMouseGate.buttonDown(0)
+        _ = disabledTapMouseGate.requestDeactivation()
+        disabledTapMouseGate.invalidateTrackedPresses()
+        suite.expect(disabledTapMouseGate.pressedButtons.isEmpty
+                && disabledTapMouseGate.deactivationPending,
+               "a tap gap forgets stale presses without losing the unlock request")
+        disabledTapMouseGate.buttonDown(1)
+        suite.expect(!disabledTapMouseGate.buttonUp(0),
+               "a release from before the tap gap cannot finish a new press")
+        suite.expect(disabledTapMouseGate.buttonUp(1),
+               "a fresh press after the tap gap still needs its own release")
+
+        var expiredWaitGate = CleaningMouseReleaseGate()
+        expiredWaitGate.buttonDown(1)
+        suite.expect(!expiredWaitGate.requestDeactivation() && expiredWaitGate.releaseWaitExpired()
+                && expiredWaitGate.pressedButtons.isEmpty && expiredWaitGate.deactivationPending,
+               "an unlock stops waiting for a release that never arrives once the wait runs out")
+        var idleWaitGate = CleaningMouseReleaseGate()
+        idleWaitGate.buttonDown(0)
+        suite.expect(!idleWaitGate.releaseWaitExpired() && idleWaitGate.pressedButtons == [0],
+               "the wait limit leaves presses alone when no unlock was asked for")
+        suite.expect(CleaningMouseReleaseGate.releaseWaitLimit > 0 && CleaningMouseReleaseGate.releaseWaitLimit <= 10,
+               "a pending cleaning unlock has a short maximum wait")
+
         // The counters above build their own windows, so nothing else here
         // fails if the shipped constant regresses. Pin it at the source: the
         // 2s window made the gesture impossible for anyone pressing Escape
@@ -125,6 +205,22 @@ enum FeatureCatalogTests {
             .joined(separator: "\n")
         suite.expect(!cleaningCode.isEmpty && cleaningCode.contains("pressWindow: 6.0"),
                "the shipped unlock counter keeps the forgiving 6s press window")
+
+        suite.expect(!cleaningCode.contains("CGEvent(mouseEventSource:"),
+               "Cleaning Mode never synthesizes a global mouse release")
+        suite.expect(!cleaningCode.contains("pressedMouseButtons")
+                && !cleaningCode.contains("CGEventSource.buttonState"),
+               "Cleaning Mode does not infer ownership from a global button-state snapshot")
+        suite.expect(cleaningCode.contains("let shouldFinishUserDeactivation = mouseReleaseGate.deactivationPending")
+                && cleaningCode.contains("mouseReleaseGate.invalidateTrackedPresses()")
+                && cleaningCode.contains("if shouldFinishUserDeactivation {"),
+               "disabled-tap recovery invalidates stale mouse state and preserves a pending user unlock")
+        suite.expect(cleaningCode.contains("self.mouseReleaseGate.deactivationPending,")
+                && cleaningCode.contains("self.mouseReleaseGate.pressedButtons.isEmpty else { return }"),
+               "queued cleaning teardown rechecks the current press state")
+        suite.expect(cleaningCode.contains("armReleaseDeadline()\n        guard mouseReleaseGate.requestDeactivation()")
+                && cleaningCode.contains("releaseDeadline?.cancel()"),
+               "every user unlock arms the release deadline and teardown cancels it")
 
         // The counter above cannot see how events reach it, and the real HID
         // gesture is not reproducible headlessly. Pin the two properties of the
@@ -140,7 +236,7 @@ enum FeatureCatalogTests {
         } ?? cleaningLines.count
         var modifiersReachCounter = false
         var leakedEvents: [String] = []
-        var failOpenReturns = 0
+        var passThroughReturns = 0
         for (index, line) in cleaningLines[(handlerStart ?? handlerEnd)..<handlerEnd].enumerated()
         where !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
             let number = (handlerStart ?? 0) + index + 1
@@ -153,15 +249,18 @@ enum FeatureCatalogTests {
                 }
             }
             if line.contains("return Unmanaged.passUnretained(event)") {
-                failOpenReturns += 1
+                passThroughReturns += 1
             } else if line.contains("return"), !line.contains("return nil") {
                 leakedEvents.append("CleaningModeManager.swift:\(number)")
             }
         }
         suite.expect(modifiersReachCounter,
                "flags-changed events feed the unlock counter, so modifiers reset the Escape count")
-        suite.expect(handlerStart != nil && leakedEvents.isEmpty && failOpenReturns == 1,
-               "the cleaning tap swallows normal input and keeps one disabled-session fail-open path: \(leakedEvents)")
+        suite.expect(handlerStart != nil
+               && leakedEvents.isEmpty
+               && passThroughReturns == 2
+               && cleaningCode.contains("if handleMouseButton(type: type, event: event)"),
+               "the cleaning tap swallows locked input while mouse events and disabled-session recovery pass through: \(leakedEvents)")
         suite.expect(cleaningCode.contains("self.deactivate(restoreSuspendedFeatures: false)")
                 && cleaningCode.contains("shouldRestoreSuspendedFeaturesOnSessionReturn = true")
                 && cleaningCode.contains("self.resumeSuspendedFeatures()")
@@ -287,7 +386,7 @@ enum FeatureCatalogTests {
 
         // MARK: Features hub catalog
 
-        suite.expect(AppFeature.allCases.count == 70, "feature catalog has 70 features")
+        suite.expect(AppFeature.allCases.count == 73, "feature catalog has 73 features")
         suite.expect(Set(AppFeature.allCases.map(\.rawValue)).count == AppFeature.allCases.count,
                "feature ids are unique")
         suite.expect(AppFeature.allCases.map(\.rawValue) == [
@@ -296,13 +395,13 @@ enum FeatureCatalogTests {
             "mouseClickDebounce", "keyboardDebounce", "textSnippets", "superKey", "quitWindowProtection",
             "clipboardHistory", "pastePlain", "finderCutPaste", "finderRename", "shelf", "urlCleaner",
             "diskImageInstaller",
-            "mixer", "soundOutputSwitcher", "micMute", "musicBlock",
+            "mixer", "soundOutputSwitcher", "audioPriority", "micMute", "musicBlock",
             "keepAwake", "brightness", "extraBrightness", "bluetoothSleep",
             "quickLauncher", "quickToggles", "colorPicker", "screenOCR", "cleaningMode", "mediaTools",
             "cleaner", "uninstaller", "homebrew", "appUpdates", "screenshot", "cameraPreview",
-            "radialMenu", "scratchpad", "commandBar", "screenRecorder", "killProcess", "portManager", "notch", "notchCalendar", "notchNotifications", "notchGestures", "notchTimer", "notchAccessories", "notchLyrics", "notchQueue", "notchLiveEqualizer", "notchDownloads",
-            "monitorCPU", "monitorGPU", "monitorMemory", "monitorNetwork", "monitorDisk", "monitorUSB", "monitorPower",
-            "fanControl",
+            "radialMenu", "scratchpad", "commandBar", "screenRecorder", "wallpaper", "killProcess", "portManager", "notch", "notchCalendar", "notchNotifications", "notchGestures", "notchTimer", "notchAccessories", "notchLyrics", "notchQueue", "notchLiveEqualizer", "notchDownloads", "notchAgents",
+            "monitorCPU", "monitorGPU", "monitorMemory", "monitorNetwork", "monitorDisk", "monitorPower",
+            "connectedDevices", "fanControl",
         ], "feature ids are stable (they persist inside availability keys)")
         suite.expect(MouseAccelerationSupport.validatedRegistryID(nil) == nil
                 && MouseAccelerationSupport.validatedRegistryID(0) == nil
@@ -426,9 +525,12 @@ enum FeatureCatalogTests {
                 && (AppFeature.availabilityDefaults[AppFeature.focusFollowsMouse.availabilityKey] as? Bool) == false
                 && (AppFeature.availabilityDefaults[AppFeature.killProcess.availabilityKey] as? Bool) == false
                 && (AppFeature.availabilityDefaults[AppFeature.portManager.availabilityKey] as? Bool) == false
+                && (AppFeature.availabilityDefaults[AppFeature.wallpaper.availabilityKey] as? Bool) == false
+                && (AppFeature.availabilityDefaults[AppFeature.audioPriority.availabilityKey] as? Bool) == false
                 && AppFeature.allCases.filter {
                     $0 != .focusFollowsMouse && $0 != .fanControl && $0 != .diskImageInstaller
-                        && $0 != .killProcess && $0 != .scrollHorizontal && $0 != .portManager
+                        && $0 != .killProcess && $0 != .scrollHorizontal && $0 != .portManager && $0 != .wallpaper
+                        && $0 != .audioPriority
                 }.allSatisfy {
                     (AppFeature.availabilityDefaults[$0.availabilityKey] as? Bool) == true
                 },
@@ -440,7 +542,7 @@ enum FeatureCatalogTests {
                "no hub group is empty")
         suite.expect(AppFeature.features(in: .dynamicIsland) == [
             .notch, .notchCalendar, .notchNotifications, .notchGestures, .notchTimer,
-            .notchAccessories, .notchLyrics, .notchQueue, .notchLiveEqualizer, .notchDownloads,
+            .notchAccessories, .notchLyrics, .notchQueue, .notchLiveEqualizer, .notchDownloads, .notchAgents,
         ], "the Dynamic Island heads its own hub section, followed by its extensions")
         suite.expect(AppFeature.dynamicIslandExtensions
                 == Array(AppFeature.features(in: .dynamicIsland).dropFirst()),
@@ -534,6 +636,11 @@ enum FeatureCatalogTests {
                "a wake owing nothing leaves Bluetooth off")
         suite.expect(!BluetoothSleepSupport.restores(owesRestore: true, isPoweredOn: true),
                "Bluetooth the user switched on first is left alone")
+        var readControllerPower = false
+        func controllerPower() -> Bool { readControllerPower = true; return false }
+        _ = BluetoothSleepSupport.restores(owesRestore: false, isPoweredOn: controllerPower())
+        suite.expect(!readControllerPower,
+               "a launch owing no restore never reads the Bluetooth controller")
 
         suite.expect((Defaults.registeredDefaults[DefaultsKey.panelShowFanControl] as? Bool) == true,
                "installing fan control reveals its panel section by default")
@@ -754,6 +861,25 @@ enum FeatureCatalogTests {
                     FanControlConfiguration.encodeCurves([defaultCurve]) ?? "") == [defaultCurve]
                 && FanControlConfiguration.decodeCurves("not json") == nil,
                "stored curves reject duplicate sensors, unsafe slopes and malformed data")
+        let resumedManual = FanControlConfiguration.manual(level: 100)
+        let resumedCurves = FanControlConfiguration.curve([defaultCurve, cpuCurve])
+        suite.expect(FanControlConfiguration.decodeResume(
+                    FanControlConfiguration.encodeResume(resumedManual) ?? "") == resumedManual
+                && FanControlConfiguration.decodeResume(
+                    FanControlConfiguration.encodeResume(resumedCurves) ?? "") == resumedCurves,
+               "a resumed manual speed or curve comes back exactly as the user applied it")
+        suite.expect(FanControlConfiguration.encodeResume(
+                    FanControlConfiguration(mode: .system, manualLevel: 100, curves: [])) == nil
+                && FanControlConfiguration.encodeResume(.manual(level: 37)) == nil
+                && FanControlConfiguration.encodeResume(.curve([descendingCurve])) == nil
+                && FanControlConfiguration.decodeResume(
+                    #"{"curves":[],"manualLevel":100,"mode":"system"}"#) == nil
+                && FanControlConfiguration.decodeResume(
+                    #"{"curves":[],"manualLevel":37,"mode":"manual"}"#) == nil
+                && FanControlConfiguration.decodeResume("") == nil
+                && FanControlConfiguration.decodeResume("not json") == nil,
+               "only a valid manual speed or curve is ever kept or brought back after a restart")
+        FanControlResumeContract.run(suite)
         let addedPoints = FanControlPolicy.addingCurvePoint(to: defaultCurve.points)
         suite.expect(FanControlPolicy.nextCurvePoint(for: defaultCurve.points) == FanControlCurvePoint(temperature: 60, coolingLevel: 50)
                 && addedPoints == [
@@ -1009,6 +1135,23 @@ enum FeatureCatalogTests {
         suite.expect(activeSet(.accessibility)
                 == [.windowLayout, .cleaningMode, .commandBar, .screenRecorder],
                "with nothing enabled only on-demand features use accessibility")
+        func radialMenuUsesAccessibility(_ profile: RadialMenuProfile, legacyItems: [RadialMenuItem]) -> Bool {
+            let stored = [DefaultsKey.radialMenuProfiles: RadialMenuSupport.encodeProfiles([profile]),
+                          DefaultsKey.radialMenuItems: RadialMenuSupport.encode(legacyItems)]
+            return AppFeature.activeFeatures(using: .accessibility,
+                                             isAvailable: { _ in true },
+                                             boolFor: { $0 == DefaultsKey.radialMenuEnabled },
+                                             stringFor: { _ in nil },
+                                             dataFor: { stored[$0] ?? nil })
+                .contains(.radialMenu)
+        }
+        let appItem = RadialMenuItem(kind: .app, payload: "/Applications/Safari.app")
+        let shortcutItem = RadialMenuItem(kind: .shortcut, payload: "control+option+command:49")
+        suite.expect(radialMenuUsesAccessibility(
+                    RadialMenuProfile(mouseButton: RadialMenuMouseTrigger.back.rawValue, items: [appItem]),
+                    legacyItems: [appItem])
+                && !radialMenuUsesAccessibility(RadialMenuProfile(items: [appItem]), legacyItems: [shortcutItem]),
+               "radial menu accessibility follows the saved profiles, not the pre-profile wheel")
         suite.expect(activeSet(.accessibility, on: [DefaultsKey.scrollInverterEnabled]).contains(.scrollInverter),
                "an enabled feature counts as using its permission")
         suite.expect(activeSet(.accessibility, on: [DefaultsKey.scrollInverterHorizontalEnabled])
@@ -1209,6 +1352,16 @@ enum FeatureCatalogTests {
                 && GlobalShortcutRole.keyboardBrightnessDecrease.group == .mouseKeyboard
                 && GlobalShortcutRole.keyboardBrightnessIncrease.group == .mouseKeyboard,
                "keyboard brightness stays owned by the brightness service but appears with keyboard controls")
+        let shortcutsPage = ShortcutsPage(state: Expansion())
+        let displayBrightness = shortcutsPage.expansionBinding(for: .brightness, in: .energyDisplay)
+        let keyboardLight = shortcutsPage.expansionBinding(for: .brightness, in: .mouseKeyboard)
+        displayBrightness.wrappedValue = true
+        suite.expect(displayBrightness.wrappedValue && !keyboardLight.wrappedValue,
+               "opening brightness in one shortcut group leaves its row in the other group closed")
+        keyboardLight.wrappedValue = true
+        displayBrightness.wrappedValue = false
+        suite.expect(!displayBrightness.wrappedValue && keyboardLight.wrappedValue,
+               "closing brightness in one shortcut group leaves an open row in the other group open")
         suite.expect(GlobalShortcutRole.keyboardBrightnessDecrease.requiredEnableKeys
                 == [DefaultsKey.keyboardBrightnessShortcutsEnabled]
                 && GlobalShortcutRole.keyboardBrightnessIncrease.requiredEnableKeys
@@ -1383,11 +1536,13 @@ enum FeatureCatalogTests {
                 case .tr: return .tr
                 case .ru: return .ru
                 case .es: return .es
+                case .sk: return .sk
                 case .de: return .de
                 case .fr: return .fr
                 case .it: return .it
                 case .ja: return .ja
                 case .ko: return .ko
+                case .uk: return .uk
                 case .zhHans: return .zhHans
                 case .zhTW: return .zhTW
                 case .zhHK: return .zhHK
@@ -1518,6 +1673,26 @@ enum FeatureCatalogTests {
         } else {
             UserDefaults.standard.removeObject(forKey: DefaultsKey.windowGestureEnabled)
         }
+        let radialMenuEnergyKeys = [DefaultsKey.radialMenuProfiles, DefaultsKey.radialMenuMouseButton]
+        let previousRadialMenuEnergy = radialMenuEnergyKeys.map { UserDefaults.standard.object(forKey: $0) }
+        func radialMenuEnergy(_ profiles: [RadialMenuProfile]?,
+                              legacyButton: RadialMenuMouseTrigger) -> FeatureEnergyProfile {
+            UserDefaults.standard.set(profiles.flatMap(RadialMenuSupport.encodeProfiles),
+                                      forKey: DefaultsKey.radialMenuProfiles)
+            UserDefaults.standard.set(legacyButton.rawValue, forKey: DefaultsKey.radialMenuMouseButton)
+            return AppFeature.radialMenu.energyProfile
+        }
+        suite.expect(radialMenuEnergy([RadialMenuProfile(mouseButton: RadialMenuMouseTrigger.back.rawValue)],
+                                      legacyButton: .off) == .mouse
+                && radialMenuEnergy([RadialMenuProfile(trackpadTap: true)], legacyButton: .off) == .mouse
+                && radialMenuEnergy([RadialMenuProfile()], legacyButton: .back) == .idle,
+               "radial menu energy follows the saved profiles and their trackpad tap, not the pre-profile button")
+        suite.expect(radialMenuEnergy(nil, legacyButton: .back) == .mouse
+                && radialMenuEnergy(nil, legacyButton: .off) == .idle,
+               "without saved profiles the pre-profile button still decides radial menu energy")
+        for (key, value) in zip(radialMenuEnergyKeys, previousRadialMenuEnergy) {
+            UserDefaults.standard.set(value, forKey: key)
+        }
 
         // MARK: Settings page visibility
 
@@ -1568,20 +1743,48 @@ enum FeatureCatalogTests {
         suite.expect(AppFeature.allCases.allSatisfy { $0.settingsDestination.hasValidSectionAnchor },
                "every feature anchor belongs to its destination page")
         suite.expect(Set(AppFeature.allCases.compactMap(\.settingsDestination.sectionAnchor))
-                == Set(SettingsSectionAnchor.allCases),
-               "every declared Settings section anchor is used by a feature destination")
+                == Set(SettingsSectionAnchor.allCases).subtracting([
+                    .panelConfiguration, .keyboardBrightnessShortcuts,
+                ])
+                && SettingsSectionAnchor.panelConfiguration.page == .general
+                && SettingsSectionAnchor.keyboardBrightnessShortcuts.page == .shortcuts,
+               "feature anchors and standalone Settings anchors reach their pages")
+        suite.expect(AppFeature.dockPreview.settingsDestination
+                == FeatureSettingsDestination(.dock, sectionAnchor: .dock)
+                && AppFeature.dockClick.settingsDestination
+                == FeatureSettingsDestination(.dock, sectionAnchor: .dockClick)
+                && FeatureVisibilitySupport.features(for: .switcher) == [.switcher]
+                && pageVisible(.dock, available: [.dockClick])
+                && !pageVisible(.switcher, available: [.dockPreview, .dockClick]),
+               "Dock Preview and Dock clicks have their own page, apart from the switcher")
+        func dockNeedsAccessibility(available: Set<AppFeature>, on: Set<String>) -> Bool {
+            FeatureVisibilitySupport.isPermissionNeeded(
+                on: .dock, activeFeatures: Array(activeSet(.accessibility, available: available, on: on)))
+        }
+        suite.expect([DefaultsKey.dockClickMinimize, DefaultsKey.dockClickHide, DefaultsKey.dockClickCycleWindows]
+                .allSatisfy { dockNeedsAccessibility(available: [.dockClick], on: [$0]) }
+                && dockNeedsAccessibility(available: [.dockPreview], on: [DefaultsKey.dockPreviewEnabled])
+                && !dockNeedsAccessibility(available: [.dockPreview], on: [DefaultsKey.dockClickMinimize])
+                && !dockNeedsAccessibility(available: allFeatures, on: [DefaultsKey.switcherEnabled]),
+               "the Dock page asks for Accessibility while Dock Preview or any Dock click action is on")
+        suite.expect(AppFeature.mixer.settingsDestination
+                == FeatureSettingsDestination(.general, sectionAnchor: .mixer)
+                && AppFeature.soundOutputSwitcher.settingsDestination
+                    == FeatureSettingsDestination(.general, sectionAnchor: .soundOutputSwitcher)
+                && AppFeature.audioPriority.settingsDestination
+                    == FeatureSettingsDestination(.general, sectionAnchor: .audioPriority),
+               "Mixer, output switcher and audio priority have separate General controls")
         suite.expect(AppFeature.windowMaximizer.settingsDestination
-                == FeatureSettingsDestination(.general, sectionAnchor: .panelConfiguration)
-                && AppFeature.mixer.settingsDestination
-                == FeatureSettingsDestination(.general, sectionAnchor: .panelConfiguration),
-               "panel-oriented features land on General panel configuration")
+                == FeatureSettingsDestination(.windowLayout, sectionAnchor: .windowMaximizer)
+                && pageVisible(.windowLayout, available: [.windowMaximizer])
+                && !pageVisible(.windowLayout,
+                                available: allFeatures.subtracting([.windowLayout, .windowMaximizer])),
+               "the green button override and its exception list keep the window layout page on their own")
         suite.expect(AppFeature.cleaningMode.settingsDestination
                 == FeatureSettingsDestination(.quickTools, sectionAnchor: .cleaningMode),
                "cleaning mode lands on Quick Tools cleaning mode section")
         suite.expect(AppFeature.musicBlock.settingsDestination
                 == FeatureSettingsDestination(.general, sectionAnchor: .musicBlocking)
-                && AppFeature.soundOutputSwitcher.settingsDestination
-                == FeatureSettingsDestination(.shortcuts, sectionAnchor: .soundOutputSwitcher)
                 && AppFeature.diskImageInstaller.settingsDestination
                 == FeatureSettingsDestination(.features),
                "features without dedicated pages use explicit nearest Settings destinations")
@@ -1736,6 +1939,25 @@ enum FeatureCatalogTests {
                 && hiddenHistoryRouter.cleanerTool == nil,
                "history can revisit re-enabled pages without replaying a stale Cleaner tool hint")
 
+        let toolHistoryRouter = SettingsRouter()
+        let sharedMouseDestination = AppFeature.scrollHorizontal.settingsDestination
+        toolHistoryRouter.request(sharedMouseDestination, sidebarFeature: .scrollHorizontal)
+        suite.expect(toolHistoryRouter.sidebarFeature == .scrollHorizontal,
+               "Settings navigation keeps the requested tool when tools share a section")
+        toolHistoryRouter.request(sharedMouseDestination, sidebarFeature: .scrollInverter)
+        suite.expect(toolHistoryRouter.sidebarFeature == .scrollInverter,
+               "switching between tools on one section updates the selected tool")
+        let audioPriorityDestination = AppFeature.audioPriority.settingsDestination
+        toolHistoryRouter.request(audioPriorityDestination, sidebarFeature: .audioPriority)
+        toolHistoryRouter.page = .about
+        toolHistoryRouter.goBack()
+        suite.expect(toolHistoryRouter.destination == audioPriorityDestination
+                && toolHistoryRouter.sidebarFeature == .audioPriority,
+               "Settings Back restores the selected tool alongside its destination")
+        toolHistoryRouter.goForward()
+        suite.expect(toolHistoryRouter.page == .about && toolHistoryRouter.sidebarFeature == nil,
+               "visiting a generic page clears the previous tool selection")
+
         // MARK: Display brightness (DDC/CI helpers)
 
         // Every section of the service below its "Rebuild (work queue)" MARK
@@ -1805,6 +2027,13 @@ enum FeatureCatalogTests {
                "keyboard brightness shortcut steps clamp to the supported range")
         suite.expect(BrightnessSupport.steppedKeyboardLightLevel(current: .nan, direction: 1) == 0,
                "an invalid keyboard brightness reading never reaches the private setter")
+        suite.expect(BrightnessSupport.sliderKeyboardLightLevel(0.37) == 0.37
+                && BrightnessSupport.sliderKeyboardLightLevel(-0.2) == 0
+                && BrightnessSupport.sliderKeyboardLightLevel(1.4) == 1,
+               "the keyboard light slider passes levels through and clamps the ends")
+        suite.expect(BrightnessSupport.sliderKeyboardLightLevel(.nan) == nil
+                && BrightnessSupport.sliderKeyboardLightLevel(.infinity) == nil,
+               "a slider value that is not a number never reaches the private setter")
 
         // EDID UUID chunks at fixed positions: vendor, product (little endian),
         // manufacture date, image size.
@@ -2175,6 +2404,17 @@ enum FeatureCatalogTests {
                                                           displayIsBuiltIn: false,
                                                           overlayReplacesNative: true),
                "with the overlay on, the system target is stepped here so only one OSD draws")
+        // An external keyboard's plain brightness keys must reach the island
+        // or the overlay too, not only the pointer routing (beta feedback).
+        suite.expect(BrightnessSupport.answersPlainBrightnessKeys(followsPointer: false, overlayReplacesNative: true)
+                && BrightnessSupport.answersPlainBrightnessKeys(followsPointer: true, overlayReplacesNative: false)
+                && !BrightnessSupport.answersPlainBrightnessKeys(followsPointer: false, overlayReplacesNative: false),
+               "plain brightness keys are answered here whenever the app replaces the system's handling")
+        suite.expect(BrightnessSupport.plainKeyTarget(followsPointer: false, pointerDisplay: 2, systemTarget: 1) == 1
+                && BrightnessSupport.plainKeyTarget(followsPointer: true, pointerDisplay: 2, systemTarget: 1) == 2
+                && BrightnessSupport.plainKeyTarget(followsPointer: true, pointerDisplay: nil, systemTarget: 1) == nil
+                && BrightnessSupport.plainKeyTarget(followsPointer: false, pointerDisplay: 2, systemTarget: nil) == nil,
+               "without pointer routing a plain key moves the system's own target, never the pointer's display")
         suite.expect(BrightnessSupport.filledBrightnessSegments(0) == 0
                 && BrightnessSupport.filledBrightnessSegments(0.01) == 1
                 && BrightnessSupport.filledBrightnessSegments(0.5) == 8
@@ -2186,6 +2426,25 @@ enum FeatureCatalogTests {
                 && BrightnessSupport.wholePercent(1.2) == 100
                 && BrightnessSupport.wholePercent(.infinity) == 0,
                "brightness overlay percentage rounds and clamps safely")
+        // Show brightness when adjusting governs the app's overlay. The island
+        // stands in for the system only while it shows notices.
+        suite.expect(BrightnessSupport.overlayReplacesNative(overlayEnabled: true, islandRoutes: false,
+                                                             islandShowsNotices: false),
+               "the opt-in overlay replaces the system's brightness feedback")
+        suite.expect(BrightnessSupport.overlayReplacesNative(overlayEnabled: false, islandRoutes: true,
+                                                             islandShowsNotices: true),
+               "an island that shows notices stands in for the system's brightness feedback")
+        let hiddenIsland = BrightnessSupport.overlayReplacesNative(overlayEnabled: false, islandRoutes: true,
+                                                                   islandShowsNotices: false)
+        suite.expect(!hiddenIsland && !BrightnessSupport.stepsSystemRoutedDisplay(followsPointer: false,
+                                                                                  displayIsBuiltIn: true,
+                                                                                  overlayReplacesNative: hiddenIsland),
+               "with the overlay off, an island hidden until hover leaves the built-in panel's key to the system")
+        suite.expect(!BrightnessSupport.overlayReplacesNative(overlayEnabled: false, islandRoutes: false,
+                                                              islandShowsNotices: true),
+               "an island without brightness leaves the key to the system")
+        suite.expect(!brightnessWorkQueueCode.contains("NotchSupport.routes(.brightness)"),
+               "the app's overlay appears only with its own option, never in place of an island that shows nothing")
 
     }
 }
@@ -2196,6 +2455,7 @@ enum FeatureCatalogTests {
 enum MusicLaunchBlockerContract {
     enum Environment {
         static var enabled = true
+        static var playReplacement = true
         static var available = true
         static var trusted = true
         static var createsTap = true
@@ -2211,7 +2471,10 @@ enum MusicLaunchBlockerContract {
     enum UserDefaults {
         static let standard = Store()
         final class Store {
-            func bool(forKey key: String) -> Bool { Environment.enabled }
+            func bool(forKey key: String) -> Bool {
+                key == DefaultsKey.musicBlockPlayReplacement
+                    ? Environment.playReplacement : Environment.enabled
+            }
         }
     }
     static func AXIsProcessTrusted() -> Bool { Environment.trusted }
@@ -2276,13 +2539,18 @@ enum MusicLaunchBlockerContract {
         var observers: [NSObjectProtocol] = []
         var mediaKeyTap: Tap?
         var lastMediaKeyAt: TimeInterval?
+        var lastMediaKeyCode: UInt16?
         var judgedLaunchPID: pid_t?
         var replacementCalls = 0
+        var replacementPlays: [Bool] = []
         func installMediaKeyTap() {
             if mediaKeyTap == nil, Environment.createsTap { mediaKeyTap = Tap() }
         }
         func removeMediaKeyTap() { mediaKeyTap?.enabled = false; mediaKeyTap = nil }
-        func openReplacementIfConfigured() { replacementCalls += 1 }
+        func openReplacementIfConfigured(startingPlayback: Bool) {
+            replacementCalls += 1
+            replacementPlays.append(startingPlayback)
+        }
     }
 
     static func run(_ suite: TestSuite) {
@@ -2291,7 +2559,9 @@ enum MusicLaunchBlockerContract {
         func reset() {
             service.stop()
             service.replacementCalls = 0
+            service.replacementPlays = []
             Environment.enabled = true
+            Environment.playReplacement = true
             Environment.available = true
             Environment.trusted = true
             Environment.createsTap = true
@@ -2335,6 +2605,16 @@ enum MusicLaunchBlockerContract {
         launch(automatic, did: true)
         suite.expect(automatic.forceCalls == 1 && automatic.terminateCalls == 0 && service.replacementCalls == 1,
                      "a detected key blocks one launch and its did-launch cannot repeat termination or replacement")
+        key(code: MusicLaunchSupport.nextTrackKeyCode)
+        launch(NSRunningApplication(50))
+        suite.expect(service.replacementPlays == [true, false],
+                     "only Play/Pause asks the replacement to play; the other media keys only open it")
+        Environment.playReplacement = false
+        key()
+        launch(NSRunningApplication(51))
+        suite.expect(service.replacementPlays == [true, false, false],
+                     "turning off replacement playback still opens it without sending play")
+        Environment.playReplacement = true
         let second = NSRunningApplication(3)
         launch(second)
         suite.expect(second.forceCalls == 0 && service.lastMediaKeyAt == nil,

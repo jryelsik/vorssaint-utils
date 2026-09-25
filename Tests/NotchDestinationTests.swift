@@ -10,6 +10,7 @@ enum NotchDestinationContract {
     enum ReviewDefaults { static var current: UserDefaults! }
     enum NotchContentTransition { case none, reveal, replace }
     final class Panel {
+        var isKeyWindow = true
         var acceptsKeyFocus = false
         func makeKey() {}
     }
@@ -35,8 +36,16 @@ enum NotchDestinationContract {
         static let shared = Service()
         struct Service { func syncWithPreferences() {} }
     }
+    final class Brightness {
+        var syncs = 0
+        func syncWithPreferences() { syncs += 1 }
+    }
+    enum BrightnessService { static var shared = Brightness() }
 
     class State {
+        var acceptsSystemFeedback = true
+        func collapse() { expanded = false }
+        var hiddenInFullscreen = false
         var running = true
         var session = NotchSessionState()
         var suspended: Bool { !session.canPresent }
@@ -89,6 +98,7 @@ enum NotchDestinationContract {
         for (key, value) in Defaults.registeredDefaults where key.hasPrefix("notch") { defaults.set(value, forKey: key) }
         for feature in AppFeature.allCases { defaults.set(true, forKey: feature.availabilityKey) }
         defaults.set(true, forKey: DefaultsKey.notchEnabled)
+        scratchpadContracts(defaults: defaults, suite: suite)
         reopeningContracts(defaults: defaults, suite: suite)
         for resting in [NotchIdleContent.none, .music] {
             defaults.set(resting.rawValue, forKey: DefaultsKey.notchIdleContent)
@@ -165,6 +175,25 @@ enum NotchDestinationContract {
         service.open(.tools)
         suite.expect(launcher.selectedIndex == nil, "an empty Tools module leaves keyboard activation without a target")
         sessionContracts(suite)
+    }
+
+    private static func scratchpadContracts(defaults: UserDefaults, suite: TestSuite) {
+        let service = Service()
+        suite.expect(service.showScratchpad(toggle: true) && service.expanded && service.selected == .scratchpad,
+                     "the Scratchpad shortcut opens its configured island destination")
+        service.panel?.isKeyWindow = false
+        suite.expect(service.showScratchpad(toggle: true) && service.expanded,
+                     "a visible Scratchpad without keyboard focus is focused instead of closed")
+        service.panel?.isKeyWindow = true
+        suite.expect(service.showScratchpad(toggle: true) && !service.expanded,
+                     "the shortcut closes a Scratchpad that already owns the keyboard")
+        defaults.set(false, forKey: DefaultsKey.notchScratchpad)
+        suite.expect(!service.showScratchpad() && !service.expanded,
+                     "choosing a separate Scratchpad window leaves the island untouched")
+        defaults.set(true, forKey: DefaultsKey.notchScratchpad)
+        service.acceptsSystemFeedback = false
+        suite.expect(!service.showScratchpad() && !service.expanded,
+                     "an unavailable island hands Scratchpad opening back to its ordinary window")
     }
 
     private static func reopeningContracts(defaults: UserDefaults, suite: TestSuite) {
@@ -244,7 +273,7 @@ enum NotchDestinationContract {
         for returnHome in [false, true] {
             defaults.set(returnHome, forKey: DefaultsKey.notchReturnHome)
             defaults.set(NotchModule.controls.rawValue, forKey: DefaultsKey.notchHomeModule)
-            for activity in [NotchCompactActivity.timer, .downloads, .music] {
+            for activity in [NotchCompactActivity.timer, .downloads, .calendar, .music] {
                 let service = Service()
                 service.open(.files)
                 service.expanded = false
@@ -295,10 +324,25 @@ enum NotchDestinationContract {
         let service = Service()
         NotchTimerService.shared = Timer()
         let timer = NotchTimerService.shared
+        // The production branch reads the brightness feature from the app's
+        // own defaults; keep it installed for these checks only.
+        let brightnessKey = AppFeature.brightness.availabilityKey
+        let previousBrightness = UserDefaults.standard.object(forKey: brightnessKey)
+        UserDefaults.standard.set(true, forKey: brightnessKey)
+        defer {
+            if let previousBrightness {
+                UserDefaults.standard.set(previousBrightness, forKey: brightnessKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: brightnessKey)
+            }
+        }
+        BrightnessService.shared = Brightness()
         service.updateSession { $0.displaysSleeping = true }
         suite.expect(timer.running && timer.suspensions == 0 && timer.syncs == 0
                && service.presentationTearDowns == 1 && !service.session.canPresent,
                "display sleep removes presentation while leaving the timer and alarm uninterrupted")
+        suite.expect(BrightnessService.shared.syncs == 1,
+               "the brightness keys go back to the system while the island is torn down")
         service.updateSession { $0.sleeping = true }
         suite.expect(!timer.running && timer.suspensions == 1 && service.presentationTearDowns == 1,
                "system sleep suspends the timer even after the display already hid the island")

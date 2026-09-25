@@ -47,6 +47,7 @@ enum NotchMusicVisibilityTests {
     enum NSEvent { static let mouseLocation = CGPoint.zero }
 
     class State {
+        var hiddenInFullscreen = false
         var running = true
         var suspended = false
         var expanded = false
@@ -68,12 +69,17 @@ enum NotchMusicVisibilityTests {
         var dragPlaceholder = false
         var hasTimerActivity = false
         var hasDownloadActivity = false
+        var downloadName: String?
+        var hasAgentActivity = false
+        var agentStripWing: CGFloat = 58
+        var calendarStripWing: CGFloat = 120
         var notchNeedsMonitor = false
         var heldDrag = false
         var pinned = false
         var openedByHover = false
         var sectionQuery = ""
         var highlightedSection: NotchModule?
+        var sectionRow = 0
         var hoverState = NotchHoverState()
         var hoverWork: DispatchWorkItem?
         var windowHost: Host?
@@ -117,6 +123,13 @@ enum NotchMusicVisibilityTests {
             suite.expect(reader.running && service.compactActivity == .music && service.surfaceSize.width > closed.width,
                    "enabled playback first appears beside both physical and simulated cameras")
 
+            service.hiddenInFullscreen = true
+            service.syncVisibleConsumers()
+            suite.expect(!reader.running, "fullscreen hiding stops the automatic playback reader")
+            service.hiddenInFullscreen = false
+            service.syncVisibleConsumers()
+            suite.expect(reader.running, "leaving fullscreen restarts the playback reader when music is enabled")
+
             defaults.set(NotchIdleContent.none.rawValue, forKey: DefaultsKey.notchIdleContent)
             service.syncVisibleConsumers()
             suite.expect(!reader.running && service.compactActivity == nil && service.idleContent == .none
@@ -128,6 +141,13 @@ enum NotchMusicVisibilityTests {
             reopened.syncVisibleConsumers()
             suite.expect(!reader.running && reopened.compactActivity == nil && reopened.surfaceSize == closed,
                    "a fresh island honors saved Nothing while playback metadata is still available")
+            defaults.set(true, forKey: DefaultsKey.notchTrackChange)
+            service.syncVisibleConsumers()
+            suite.expect(reader.running && service.compactActivity == nil && service.surfaceSize == closed,
+                   "announcing new songs keeps the reader on with Nothing at rest, without a music strip")
+            defaults.set(false, forKey: DefaultsKey.notchTrackChange)
+            service.syncVisibleConsumers()
+            suite.expect(!reader.running, "turning new song notices off stops that reader again")
             for automatic in [false, true] {
                 defaults.set(automatic, forKey: DefaultsKey.notchShowPlayingMusic)
                 for module in [NotchModule.music, .controls] {
