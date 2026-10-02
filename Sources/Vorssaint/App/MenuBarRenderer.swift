@@ -225,7 +225,7 @@ enum MenuBarRenderer {
     private static let glyphAndButtonChrome: CGFloat = 26
     private static let separatorWidth = 3
     private static let rateBlockReservedLines = [
-        "↓8888B", "↑8888B", "R8888B", "W8888B",
+        "↓999Kb", "↑999Kb", "R8888B", "W8888B",
         "↓8888M", "↑8888M", "R8888M", "W8888M",
     ]
     private static let blockImageCache: NSCache<NSString, NSImage> = {
@@ -471,8 +471,8 @@ enum MenuBarRenderer {
                 }
             case .network:
                 if let down = snapshot.netDownBytesPerSec, let up = snapshot.netUpBytesPerSec {
-                    groups.append([.networkBlock(down: MetricFormat.bytesPerSecCompact(down),
-                                                 up: MetricFormat.bytesPerSecCompact(up),
+                    groups.append([.networkBlock(down: MetricFormat.networkRateCompact(down),
+                                                 up: MetricFormat.networkRateCompact(up),
                                                  style: style)])
                 }
             case .diskUsage:
@@ -662,7 +662,7 @@ enum MenuBarRenderer {
         case (_, .peripheralBattery):
             return 12      // symbol + " KBD 100%+9"
         case (_, .network):
-            return 15      // down symbol + 1.0G + up symbol + 1.0G
+            return 15      // down symbol + 999Kb/1023K + up symbol + 999Kb/1023K
         case (_, .diskUsage):
             return DiskMenuBarStyle.current.showsPercentage ? 11 : 14
         case (_, .diskActivity):
