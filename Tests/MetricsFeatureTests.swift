@@ -84,6 +84,9 @@ enum MetricsFeatureTests {
 
         expectEqual(MetricFormat.networkRate(1_500, inBits: true), "12 Kbps", "network rate in bits")
         expectEqual(MetricFormat.networkRate(1_500 * 1024, inBits: false), "1.5 MB/s", "network rate in bytes")
+        let graphCeilingSample = MetricFormat.graphCeiling(1.2 * 1024 * 1024, unitStep: 1024)
+        expectEqual(MetricFormat.networkRate(graphCeilingSample, inBits: true), "17 Mbps", "graph ceiling rate in bits")
+        expectEqual(MetricFormat.networkRate(graphCeilingSample, inBits: false), "2.0 MB/s", "graph ceiling rate in bytes")
         expectEqual(MetricFormat.networkRateCompact(40_000, inBits: true), "320Kb", "compact network rate in bits")
         expectEqual(MetricFormat.networkRateCompact(320 * 1024, inBits: false), "320K", "compact network rate in bytes")
 

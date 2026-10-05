@@ -151,6 +151,7 @@ struct MetricDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(DefaultsKey.temperatureUnit) private var temperatureUnit = TemperatureUnit.celsius.rawValue
     @AppStorage(DefaultsKey.monitorInterval) private var monitorInterval = 2
+    @AppStorage(DefaultsKey.networkSpeedUnit) private var networkSpeedUnit = "bits"
     let kind: MetricDetailKind
     @State private var processRows: [ProcessUsage] = []
     @State private var processRowsLoading = false
@@ -270,7 +271,7 @@ struct MetricDetailView: View {
                           fillOpacity: 0.08)
             }
             .frame(height: 38)
-            .graphCeilingLabel(MetricFormat.bytesPerSec(peak))
+            .graphCeilingLabel(MetricFormat.networkRate(peak))
         }
     }
 

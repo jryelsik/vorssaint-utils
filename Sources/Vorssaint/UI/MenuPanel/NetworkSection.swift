@@ -254,7 +254,7 @@ struct NetworkSection: View {
                       fillOpacity: 0.08)
         }
         .frame(height: 30)
-        .graphCeilingLabel(MetricFormat.bytesPerSec(peak))
+        .graphCeilingLabel(MetricFormat.networkRate(peak, inBits: speedInBits))
     }
 
     @ViewBuilder
